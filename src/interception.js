@@ -1308,15 +1308,20 @@ const proxyRoutes = [
                 };
                 let features = {"graphql_timeline_v2_bookmark_timeline":true,"blue_business_profile_image_shape_enabled":true,"responsive_web_graphql_exclude_directive_enabled":true,"verified_phone_label_enabled":false,"responsive_web_graphql_timeline_navigation_enabled":true,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"tweetypie_unmention_optimization_enabled":true,"vibe_api_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"tweet_awards_web_tipping_enabled":false,"freedom_of_speech_not_reach_fetch_enabled":true,"standardized_nudges_misinfo":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":false,"interactive_text_enabled":true,"responsive_web_text_conversations_enabled":false,"longform_notetweets_rich_text_read_enabled":true,"responsive_web_enhance_cards_enabled":false};
 
+                // Several accounts can feed one Bookmarks column, so the cursor and the
+                // receive times are kept per account; keying them by tweet id alone mixed
+                // the accounts up (#545).
+                const bookmarkUser = xhr.modReqHeaders["x-act-as-user-id"] ?? getCurrentUserId();
+                xhr.storage.user_id = bookmarkUser;
                 let max_id = params.get("max_id");
                 if (max_id) {
                     let bn = BigInt(params.get("max_id"));
                     bn += BigInt(1);
-                    if (cursors[`bookmarks-${bn}`]) {
-                        variables.cursor = cursors[`bookmarks-${bn}`];
+                    if (cursors[`bookmarks-${bookmarkUser}-${bn}`]) {
+                        variables.cursor = cursors[`bookmarks-${bookmarkUser}-${bn}`];
                     }
-                    if(bookmarkTimes[`${bn}`]) {
-                        xhr.storage.time = bookmarkTimes[`${bn}`];
+                    if(bookmarkTimes[`${bookmarkUser}-${bn}`]) {
+                        xhr.storage.time = bookmarkTimes[`${bookmarkUser}-${bn}`];
                     }
                 }
 
@@ -1367,7 +1372,13 @@ const proxyRoutes = [
             for (let entry of entries) {
                 if (entry.entryId.startsWith("tweet-")) {
                     let result = entry.content.itemContent.tweet_results.result;
-                    let tweet = parseTweet(result);
+                    let tweet;
+                    try {
+                        tweet = parseTweet(result);
+                    } catch (e) {
+                        // One odd entry should not empty the whole column.
+                        console.warn("error parsing bookmark", e);
+                    }
                     if (tweet) {
                         tweets.push(tweet);
                     }
@@ -1377,7 +1388,12 @@ const proxyRoutes = [
                         let item = items[i];
                         let result = item.item.itemContent.tweet_results.result;
                         if (item.entryId.startsWith("tweet-") || item.entryId.includes("-tweet-")) {
-                            let tweet = parseTweet(result);
+                            let tweet;
+                            try {
+                                tweet = parseTweet(result);
+                            } catch (e) {
+                                console.warn("error parsing bookmark", e);
+                            }
                             if (tweet && tweet.user.id_str === xhr.storage.user_id) {
                                 tweets.push(tweet);
                             }
@@ -1390,8 +1406,9 @@ const proxyRoutes = [
 
             for(let i = 0; i < tweets.length; i++) {
                 const tweet = tweets[i];
-                tweet.receiveTime = bookmarkTimes[tweet.id_str] ?? ((xhr.storage.time ?? Date.now()) - i);
-                bookmarkTimes[tweet.id_str] = tweet.receiveTime;
+                const bookmarkKey = (id) => `${xhr.storage.user_id}-${id}`;
+                tweet.receiveTime = bookmarkTimes[bookmarkKey(tweet.id_str)] ?? ((xhr.storage.time ?? Date.now()) - i);
+                bookmarkTimes[bookmarkKey(tweet.id_str)] = tweet.receiveTime;
             }
 
             let cursor = entries.find(
@@ -1400,7 +1417,7 @@ const proxyRoutes = [
                     e.entryId.startsWith("cursor-bottom-")
             ).content.value;
             if (cursor) {
-                cursors[`bookmarks-${tweets[tweets.length - 1].id_str}`] = cursor;
+                cursors[`bookmarks-${xhr.storage.user_id}-${tweets[tweets.length - 1].id_str}`] = cursor;
             }
 
             return tweets;
