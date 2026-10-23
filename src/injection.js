@@ -41,14 +41,12 @@ async function main() {
     if (!localStorage.getItem("OTDalwaysUseLocalFiles")) {
         const [
             remote_challenge_js_req,
-            remote_interception_js_req,
             remote_vendor_js_req,
             remote_bundle_js_req,
             remote_bundle_css_req,
             remote_twitter_text_req,
         ] = await Promise.allSettled([
             fetch("https://raw.githubusercontent.com/dimdenGD/OldTweetDeck/main/src/challenge.js"),
-            fetch("https://raw.githubusercontent.com/dimdenGD/OldTweetDeck/main/src/interception.js"),
             fetch("https://raw.githubusercontent.com/dimdenGD/OldTweetDeck/main/files/vendor.js"),
             fetch("https://raw.githubusercontent.com/dimdenGD/OldTweetDeck/main/files/bundle.js"),
             fetch("https://raw.githubusercontent.com/dimdenGD/OldTweetDeck/main/files/bundle.css"),
@@ -57,7 +55,6 @@ async function main() {
         
         if(
             (remote_challenge_js_req.value && remote_challenge_js_req.value.ok) ||
-            (remote_interception_js_req.value && remote_interception_js_req.value.ok) || 
             (remote_vendor_js_req.value && remote_vendor_js_req.value.ok) ||
             (remote_bundle_js_req.value && remote_bundle_js_req.value.ok) ||
             (remote_bundle_css_req.value && remote_bundle_css_req.value.ok) ||
@@ -65,33 +62,23 @@ async function main() {
         ) {
             const [
                 remote_challenge_js,
-                remote_interception_js,
                 remote_vendor_js,
                 remote_bundle_js,
                 remote_bundle_css,
                 remote_twitter_text,
             ] = await Promise.allSettled([
                 remote_challenge_js_req.value.text(),
-                remote_interception_js_req.value.text(),
                 remote_vendor_js_req.value.text(),
                 remote_bundle_js_req.value.text(),
                 remote_bundle_css_req.value.text(),
                 remote_twitter_text_req.value.text(),
             ]);
 
-            // challenge.js stays on the local copy. It is the file that points at the
-            // bundled solver.html, so taking the upstream copy here would silently
-            // undo the local solver and put the hosted one back.
+            // challenge.js and interception.js stay on the local copies: challenge.js
+            // points at the bundled solver.html, and interception.js carries the fix for
+            // the cold-start state request (#547). Taking the upstream copies here would
+            // silently undo both.
 
-            if (
-                remote_interception_js_req.value &&
-                remote_interception_js_req.value.ok &&
-                remote_interception_js.status === "fulfilled" &&
-                remote_interception_js.value.length > 30
-            ) {
-                interception_js = remote_interception_js;
-                console.log("Using remote interception.js");
-            }
             if (
                 remote_vendor_js_req.value &&
                 remote_vendor_js_req.value.ok &&
