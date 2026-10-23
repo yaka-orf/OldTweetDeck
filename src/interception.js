@@ -2537,6 +2537,7 @@ const proxyRoutes = [
         },
         afterRequest: (xhr) => {
             const data = JSON.parse(xhr.responseText);
+            if (data.errors) console.warn('[OTD] verify_credentials returned errors', JSON.stringify(data.errors).slice(0, 150));
             try {
                 if(!xhr.storage.user_id && !data.errors) {
                     localStorage.OTDverifiedUser = JSON.stringify(data);
@@ -2627,7 +2628,7 @@ const proxyRoutes = [
             // On a cold start, TweetDeck asks for its initial state while account
             // verification is still in flight. Building the default settings needs
             // verifiedUser.id_str, so answer only after verification has run.
-            const deadline = Date.now() + 8000;
+            const deadline = Date.now() + 20000;
             while (!settings && !verifiedUser?.id_str) {
                 if (Date.now() >= deadline) {
                     // Verification never completed (a failed lazy chunk can block it).
