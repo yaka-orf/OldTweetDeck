@@ -191,21 +191,19 @@ window.addEventListener('message', e => {
             }, '*');
         }
         otdSendInit = sendInit;
-        if(solverIframe.contentWindow) {
+        // The iframe may not have finished loading when init is first posted, and a
+        // message sent to a frame that is still loading is lost. Keep re-sending until
+        // the solver answers, otherwise a slow cold start leaves the solver uninitialised.
+        let initTries = 0;
+        const initTimer = setInterval(() => {
+            if(ready || solverUsingRemote || ++initTries > 20) {
+                clearInterval(initTimer);
+                return;
+            }
             sendInit();
-            setTimeout(() => {
-                if(!ready) {
-                    sendInit();
-                }
-            }, 2500);
-        } else {
-            setTimeout(() => {
-                if(!ready) {
-                    sendInit();
-                }
-            }, 2500);
-            solverIframe.addEventListener('load', () => sendInit());
-        }
+        }, 1000);
+        solverIframe.addEventListener('load', () => sendInit());
+        sendInit();
         // If the bundled solver never answers (a page CSP can refuse the
         // chrome-extension: frame, and a future X bundle can defeat the extraction),
         // switch this session over to the hosted solver instead of leaving the
@@ -219,7 +217,7 @@ window.addEventListener('message', e => {
                 ready = false;
                 solverIframe.addEventListener('load', () => otdSendInit && otdSendInit(), { once: true });
                 solverIframe.src = OTD_REMOTE_SOLVER;
-            }, 8000);
+            }, 20000);
         }
     } catch (e) {
         console.error(`Error during challenge:`);

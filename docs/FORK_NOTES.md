@@ -70,3 +70,17 @@ same reason as `challenge.js`: the upstream copy would undo the fix above.
 
 Note: a missing lazy chunk (`ChunkLoadError`) can still block verification and leave
 the deck at the login screen. That is a separate problem from the crash above.
+
+### Solver init on a cold start
+
+The solver iframe is created before it has loaded, so the first `init` message was
+posted into a frame that was still loading and was dropped. There was one retry at
+2.5 s, which is not enough on a cold start, so the solver never answered, the
+challenge for `verify_credentials` timed out, and the deck fell back to the login
+screen. `src/challenge.js` now re-sends `init` every second until the solver answers
+(capped at 20 tries) and only falls back to the hosted solver after 20 s instead of 8.
+
+Measured on the same profile: 0 of 6 cold starts loaded before the change, 3 of 5 after.
+The remaining failures log `ChunkLoadError: Loading chunk 11408 failed.
+(missing: .../icons.5.4d856421ee8431c5a.js)`; that file returns 200 and pushes chunk
+11408, so the chunk is not stale. Not fixed yet.
