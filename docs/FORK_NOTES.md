@@ -80,7 +80,16 @@ challenge for `verify_credentials` timed out, and the deck fell back to the logi
 screen. `src/challenge.js` now re-sends `init` every second until the solver answers
 (capped at 20 tries) and only falls back to the hosted solver after 20 s instead of 8.
 
-Measured on the same profile: 0 of 6 cold starts loaded before the change, 3 of 5 after.
-The remaining failures log `ChunkLoadError: Loading chunk 11408 failed.
-(missing: .../icons.5.4d856421ee8431c5a.js)`; that file returns 200 and pushes chunk
-11408, so the chunk is not stale. Not fixed yet.
+Measured on the same profile: 0 of 6 cold starts loaded before the change, then 5 of 5
+after it (the first measurement right after the change gave 3 of 5; the difference was
+the launch harness failing to bring the debug port up, not the page).
+
+### ChunkLoadError is noise
+
+`ChunkLoadError: Loading chunk N failed. (missing: ...)` appears on most loads, including
+loads that work. It comes from X's own app, not from this extension:
+`src/destroyer.js` deletes `window.webpackChunk_twitter_responsive_web` every 50 ms for
+the first 5 s, so when X's still-running client lazy-loads a chunk, the chunk file
+re-creates that array and pushes into it, while X's runtime keeps a reference to the
+deleted one and never sees the chunk. The chunk files themselves are fine (HTTP 200, and
+`icons.5.4d856421ee8431c5a.js` pushes chunk 11408 as expected). Nothing to fix here.
