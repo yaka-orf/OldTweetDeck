@@ -93,3 +93,19 @@ the first 5 s, so when X's still-running client lazy-loads a chunk, the chunk fi
 re-creates that array and pushes into it, while X's runtime keeps a reference to the
 deleted one and never sees the chunk. The chunk files themselves are fine (HTTP 200, and
 `icons.5.4d856421ee8431c5a.js` pushes chunk 11408 as expected). Nothing to fix here.
+
+## Videos do not play (#563)
+
+TweetDeck embeds its player as an iframe pointing at `x.com/i/videos/tweet/<id>` (and
+`x.com/i/videos/static?video_url=...` for cards). Both URLs now answer `200` with an
+empty body, so the frame stays blank.
+
+- `video.html` / `video.js`: a small player that takes the original URL as `?orig=` and
+  plays the tweet's best `video/mp4` variant. For `/i/videos/tweet/<id>` it looks the
+  tweet up through `TweetDetail` with the account's cookies; for `/i/videos/static` it
+  uses the `video_url` parameter directly.
+- `src/interception.js`: a MutationObserver rewrites any `i/videos/` iframe to the
+  bundled player (`VIDEO_PAGE_URL`, substituted by `injection.js`).
+- `manifest.json`: `video.html` added to `web_accessible_resources`.
+
+The page must load `video.js` from a file: MV3 blocks inline scripts in extension pages.

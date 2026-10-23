@@ -5,6 +5,37 @@ const NEW_API = `https://${location.hostname}/i/api/graphql`;
 const cursors = {};
 const OTD_INIT_TIME = Date.now();
 
+// Videos: x.com/i/videos/* used to serve the tweet player, but it now answers 200 with an
+// empty body, so the frame stays blank and nothing plays. Point those frames at the
+// bundled player instead. VIDEO_PAGE_URL is replaced with the extension URL by injection.js.
+const OTD_VIDEO_PAGE = "VIDEO_PAGE_URL";
+(function otdVideoFrames() {
+    const isDeadPlayer = (src) => /^https?:\/\/(?:www\.)?(?:twitter|x)\.com\/i\/videos\//.test(src || "");
+    const fix = (frame) => {
+        const src = frame.getAttribute("src") || frame.src || "";
+        if (!isDeadPlayer(src) || frame.dataset.otdVideo) return;
+        frame.dataset.otdVideo = "1";
+        frame.src = OTD_VIDEO_PAGE + "?orig=" + encodeURIComponent(src);
+    };
+    const scan = (root) => {
+        if (!root || root.nodeType !== 1) return;
+        if (root.tagName === "IFRAME") fix(root);
+        if (root.querySelectorAll) root.querySelectorAll("iframe").forEach(fix);
+    };
+    const start = () => {
+        scan(document.documentElement);
+        new MutationObserver((records) => {
+            for (const record of records) {
+                for (const node of record.addedNodes) scan(node);
+                if (record.type === "attributes" && record.target.tagName === "IFRAME") fix(record.target);
+            }
+        }).observe(document.documentElement, {childList: true, subtree: true, attributes: true, attributeFilter: ["src"]});
+    };
+    if (document.documentElement) start();
+    else document.addEventListener("DOMContentLoaded", start);
+})();
+
+
 const generateID = () => {
     return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
