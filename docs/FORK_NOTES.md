@@ -109,3 +109,17 @@ empty body, so the frame stays blank.
 - `manifest.json`: `video.html` added to `web_accessible_resources`.
 
 The page must load `video.js` from a file: MV3 blocks inline scripts in extension pages.
+
+## Bookmarks column with several accounts (#545)
+
+`/1.1/statuses/bookmarks.json` was answered with cursor and receive-time state keyed only
+by tweet id, and the handler never set `xhr.storage.user_id`. With more than one account
+feeding the same Bookmarks column the accounts therefore shared one cursor and one set of
+times, and the `profile-conversation` branch compared `tweet.user.id_str` against
+`undefined`, so those entries were dropped.
+
+- the handler now resolves the account (`x-act-as-user-id`, else the current account) and
+  stores it in `xhr.storage.user_id`
+- cursor and `bookmarkTimes` keys include that account id
+- `parseTweet` is wrapped per entry, so one malformed bookmark no longer empties the
+  column (the `Cannot read properties of undefined (reading 'legacy')` report)
