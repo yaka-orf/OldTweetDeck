@@ -25,7 +25,7 @@
     ],
     "web_accessible_resources": [
         {
-            "resources": ["images/*", "files/*", "src/*", "solver.html", "manifest.json"],
+            "resources": ["images/*", "files/*", "src/*", "solver.html", "video.html", "manifest.json"],
             "matches": ["<all_urls>"]
         }
     ],

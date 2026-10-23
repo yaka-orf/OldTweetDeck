@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8" />
+	<title>Video</title>
+	<style>
+		html, body { margin: 0; height: 100%; background: #000; }
+		body { display: flex; align-items: center; justify-content: center; }
+		video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+		#msg { color: #ccc; font: 14px system-ui, sans-serif; padding: 12px; text-align: center; }
+	</style>
+</head>
+
+<body>
+	<!--
+		Replacement for the player that used to live at x.com/i/videos/*. Those URLs now
+		return an empty 200, so the tweet's own video never started. This page plays the
+		mp4 variant directly. It is opened with ?orig=<the original player URL>, which is
+		either .../i/videos/tweet/<id> (needs a GraphQL lookup) or .../i/videos/static
+		with a video_url parameter.
+	-->
+	<div id="msg">loading video…</div>
+	<script src="video.js"></script>
+</body>
+
+</html>

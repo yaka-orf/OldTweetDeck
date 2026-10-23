@@ -123,7 +123,7 @@ async function main() {
     document.head.appendChild(challenge_js_script);
 
     let interception_js_script = document.createElement("script");
-    interception_js_script.innerHTML = interception_js.value;
+    interception_js_script.innerHTML = interception_js.value.replaceAll('VIDEO_PAGE_URL', chrome.runtime.getURL("video.html"));
     document.head.appendChild(interception_js_script);
 
     let bundle_css_style = document.createElement("style");
