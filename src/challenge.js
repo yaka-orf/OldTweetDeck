@@ -3,6 +3,14 @@ let solveCallbacks = {};
 let solverErrored = false;
 let ready = false;
 
+// SOLVER_URL is replaced with the extension's own solver.html by injection.js.
+// The Firefox build has no sandbox page, so it keeps using the hosted solver.
+const OTD_REMOTE_SOLVER = "https://tweetdeck.dimden.dev/solver.html?4";
+const OTD_IS_FIREFOX = navigator.userAgent.indexOf('Firefox') > -1;
+const OTD_LOCAL_SOLVER = "SOLVER_URL";
+let solverUsingRemote = OTD_IS_FIREFOX;
+let otdSendInit = null;
+
 let solverIframe = document.createElement('iframe');
 solverIframe.style.position = 'absolute';
 solverIframe.width = '0px';
@@ -11,15 +19,7 @@ solverIframe.style.border = 'none';
 solverIframe.style.opacity = 0;
 solverIframe.style.pointerEvents = 'none';
 solverIframe.tabIndex = -1;
-solverIframe.src = "https://tweetdeck.dimden.dev/solver.html?4"; // check source code of that page to make sure its safe if u dont trust it
-fetch(solverIframe.src).catch(() => {
-    console.error("Cannot load solver iframe");
-    solverErrored = true;
-    for(let id in solveCallbacks) {
-        solveCallbacks[id].reject('Solver errored');
-        delete solveCallbacks[id];
-    }
-});
+solverIframe.src = solverUsingRemote ? OTD_REMOTE_SOLVER : OTD_LOCAL_SOLVER;
 let injectedBody = document.getElementById('injected-body');
 if(injectedBody) injectedBody.appendChild(solverIframe);
 else {
@@ -190,6 +190,7 @@ window.addEventListener('message', e => {
                 verificationCode: dom.querySelector('meta[name="twitter-site-verification"]').content,
             }, '*');
         }
+        otdSendInit = sendInit;
         if(solverIframe.contentWindow) {
             sendInit();
             setTimeout(() => {
@@ -204,6 +205,21 @@ window.addEventListener('message', e => {
                 }
             }, 2500);
             solverIframe.addEventListener('load', () => sendInit());
+        }
+        // If the bundled solver never answers (a page CSP can refuse the
+        // chrome-extension: frame, and a future X bundle can defeat the extraction),
+        // switch this session over to the hosted solver instead of leaving the
+        // extension without a challenge solver.
+        if(!OTD_IS_FIREFOX) {
+            setTimeout(() => {
+                if(ready || solverUsingRemote) return;
+                console.warn('[OTD] local solver did not initialize, falling back to the hosted solver');
+                solverUsingRemote = true;
+                solverErrored = false;
+                ready = false;
+                solverIframe.addEventListener('load', () => otdSendInit && otdSendInit(), { once: true });
+                solverIframe.src = OTD_REMOTE_SOLVER;
+            }, 8000);
         }
     } catch (e) {
         console.error(`Error during challenge:`);

@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<meta name="twitter-site-verification" content="loading" />
+	<meta name="otd-solver" content="local-1" />
+</head>
+
+<body>
+	This page is used to solve security challenge given by Twitter. You're free
+	to check it's source code to make sure it's safe.
+	<div id="anims"></div>
+	<script>
+		// Local copy of the solver, bundled with this fork so a change on the hosted
+		// copy cannot break the extension. Based on https://tweetdeck.dimden.dev/solver.html?4
+		// (fetched 2026-10-23), with the module lookup made independent of the chunk index.
+		//
+		// eval() is required here: the page has to run X's own vendor bundle and the
+		// patched challenge module, which are fetched as plain text. This file is declared
+		// as a sandbox page in manifest.json, so it runs in an opaque origin without
+		// access to extension APIs, cookies or the page's DOM.
+		console.log("[OTD solver] local solver loaded");
+
+		function sleep(ms) {
+			return new Promise((resolve) => setTimeout(resolve, ms));
+		}
+
+		let inited = false;
+		let initError = false,
+			solver;
+		window.addEventListener("message", async function (event) {
+			if (
+				event.origin !== "https://twitter.com" &&
+				event.origin !== "https://x.com"
+			) {
+				return;
+			}
+			let data = event.data;
+			if (data.action === "init") {
+				try {
+					if (inited) return;
+					inited = true;
+					window.__SCRIPTS_LOADED__ = {
+						runtime: true
+					};
+					eval(data.vendor);
+					let animsDiv = document.getElementById("anims");
+					for (let anim of data.anims) {
+						animsDiv.innerHTML += `\n${anim}`;
+					}
+					let verif = document.querySelector(
+						'meta[name="twitter-site-verification"]'
+					);
+					verif.content = data.verificationCode;
+					const idMatch = data.challenge.match(/\.push\(\[\[\d+\],\{(\d+)[:(]/);
+					if (!idMatch) {
+						console.error('Module ID not found');
+						event.source.postMessage({ action: 'initError', error: 'Module ID not found' }, event.origin);
+						initError = 'Module ID not found';
+						return;
+					}
+					const id = idMatch[1];
+					const assignMatch = data.challenge.match(/(\w+\s*\.\s*default\s*=\s*)\(\s*\)\s*=>/);
+					const propMatch = data.challenge.match(/default:\(\)=>(\w+)\}\)/);
+					const arrayMatch = data.challenge.match(/\.d\([\w$]+,\["default",(\d+),([\w$]+)[,\]]/);
+					if (!assignMatch && !propMatch && !arrayMatch) {
+						console.error('Default export not found');
+						event.source.postMessage({ action: 'initError', error: 'Default export not found' }, event.origin);
+						initError = 'Default export not found';
+						return;
+					}
+					let patchedChallengeData;
+					if (assignMatch) {
+						patchedChallengeData = data.challenge.replace(
+							assignMatch[0],
+							`${assignMatch[1]}window.__CHALLENGE_FN__=()=>`
+						);
+					} else if (propMatch) {
+						const defaultVar = propMatch[1];
+						patchedChallengeData = data.challenge.replace(
+							`default:()=>${defaultVar}`,
+							`default:(window._CHALLENGE=()=>${defaultVar})`
+						);
+					} else {
+						const [, flag, defaultVar] = arrayMatch;
+						patchedChallengeData = data.challenge.replace(
+							`["default",${flag},${defaultVar}`,
+							`["default",${flag},(window._CHALLENGE=()=>${defaultVar},${defaultVar})`
+						);
+					}
+					eval(patchedChallengeData);
+					// 1) Collect all module factories that have already been pushed
+					const chunks = self.webpackChunk_twitter_responsive_web || [];
+					const registry = {};
+					for (const payload of chunks) {
+						// Each payload looks like: [chunkIds, moreModules, runtime]
+						// where moreModules is an object: { [moduleId]: factory }
+						if (payload && payload[1]) Object.assign(registry, payload[1]);
+					}
+
+					// 2) A minimal __webpack_require__ with a cache and a few helpers
+					const cache = {};
+					function wreq(id) {
+						if (cache[id]) return cache[id].exports;
+						const factory = registry[id];
+						if (!factory) throw new Error("No module with id " + id);
+
+						const module = { id, loaded: false, exports: {} };
+						cache[id] = module;
+
+						factory(module, module.exports, wreq);
+
+						module.loaded = true;
+						return module.exports;
+					}
+
+					wreq.d = (exports, definition) => {
+						if (Array.isArray(definition)) {
+							// newer webpack: flat [name, flag, value, ...] list
+							for (let i = 0; i < definition.length; i += 3) {
+								const [key, flag, value] = definition.slice(i, i + 3);
+								Object.defineProperty(exports, key, { enumerable: true, get: flag && typeof value === "function" ? value : () => value });
+							}
+							return;
+						}
+						for (const key in definition) {
+							Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+						}
+					};
+					wreq.r = (exports) => {
+						if (typeof Symbol !== "undefined" && Symbol.toStringTag) {
+							Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
+						}
+						Object.defineProperty(exports, "__esModule", { value: true });
+					};
+					wreq.n = (mod) => {
+						const getter = mod && mod.__esModule ? () => mod.default : () => mod;
+						wreq.d(getter, { a: getter });
+						return getter;
+					};
+					wreq.o = (obj, prop) => Object.prototype.hasOwnProperty.call(obj, prop);
+					wreq.dn = (fn) => {
+						try {
+							if (typeof fn === "function" && !fn.name) Object.defineProperty(fn, "name", { value: "default", configurable: true });
+						} catch {}
+						return fn;
+					};
+
+					// 3) Run the challenge module out of the chunk that actually holds it.
+					// The hosted copy hardcoded chunk index 1; look the id up instead so a
+					// different chunk order does not break initialization.
+					let challengePayload = null;
+					for (const payload of chunks) {
+						if (payload && payload[1] && payload[1][id]) {
+							challengePayload = payload;
+							break;
+						}
+					}
+					if (!challengePayload) {
+						throw new Error("Challenge module " + id + " not found in pushed chunks");
+					}
+					challengePayload[1][id](chunks, cache, wreq);
+
+					if (window.__CHALLENGE_FN__) {
+						window._CHALLENGE = () => window.__CHALLENGE_FN__;
+					}
+					solver = window._CHALLENGE();
+					solver = solver();
+					event.source.postMessage({ action: "ready" }, event.origin);
+					console.log("Solver initialized successfully");
+				} catch (e) {
+					console.error("Error while initializing solver", e);
+					event.source.postMessage({ action: "initError", error: String(e) }, event.origin);
+					initError = String(e);
+				}
+			} else if (data.action === "solve") {
+				if (initError) {
+					event.source.postMessage(
+						{ action: "error", error: "Challenge initialization error: " + initError, id: data.id },
+						event.origin
+					);
+					return;
+				}
+				if (!solver) {
+					let i = 0;
+					while (!solver && !initError && i++ < 200) {
+						await sleep(100);
+					}
+					if (initError || !solver) {
+						event.source.postMessage(
+							{ action: "error", error: "Challenge initialization error: " + initError, id: data.id },
+							event.origin
+						);
+						return;
+					}
+				}
+				try {
+					let result = await solver(data.path, data.method);
+					event.source.postMessage(
+						{ action: "solved", result, id: data.id },
+						event.origin
+					);
+				} catch (e) {
+					event.source.postMessage(
+						{ action: "error", error: e.message, id: data.id },
+						event.origin
+					);
+				}
+			}
+		});
+	</script>
+</body>
+
+</html>

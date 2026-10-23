@@ -79,15 +79,9 @@ async function main() {
                 remote_twitter_text_req.value.text(),
             ]);
 
-            if (
-                remote_challenge_js_req.value &&
-                remote_challenge_js_req.value.ok &&
-                remote_challenge_js.status === "fulfilled" &&
-                remote_challenge_js.value.length > 30
-            ) {
-                challenge_js = remote_challenge_js;
-                console.log("Using remote challenge.js");
-            }
+            // challenge.js stays on the local copy. It is the file that points at the
+            // bundled solver.html, so taking the upstream copy here would silently
+            // undo the local solver and put the hosted one back.
 
             if (
                 remote_interception_js_req.value &&
