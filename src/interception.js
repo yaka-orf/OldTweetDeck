@@ -18,7 +18,7 @@ if(localStorage.OTDverifiedUser) {
         verifiedUser = null;
     }
 }
-let feeds;
+let feeds = {}; // keep the JSON round-trip from storing "undefined"
 if(localStorage.OTDfeeds) {
     try {
         feeds = JSON.parse(localStorage.OTDfeeds);
@@ -27,7 +27,7 @@ if(localStorage.OTDfeeds) {
         feeds = {};
     }
 }
-let columns;
+let columns = {}; // same as feeds
 if(localStorage.OTDcolumns) {
     try {
         columns = JSON.parse(localStorage.OTDcolumns);
@@ -720,7 +720,7 @@ function formatTwitterStyle(date) {
 }
 
 function emulateResponse(xhr) {
-    xhr._status = 200;
+    xhr._status = xhr._status ?? 200;
     xhr._readyState = 4;
     xhr.responseHeaderOverride = {
         "content-type": () => "application/json"
@@ -2623,7 +2623,23 @@ const proxyRoutes = [
         path: "/1.1/tweetdeck/clients/blackbird/all",
         method: "GET",
         openHandler: () => {},
-        sendHandler: emulateResponse,
+        sendHandler: async (xhr) => {
+            // On a cold start, TweetDeck asks for its initial state while account
+            // verification is still in flight. Building the default settings needs
+            // verifiedUser.id_str, so answer only after verification has run.
+            const deadline = Date.now() + 8000;
+            while (!settings && !verifiedUser?.id_str) {
+                if (Date.now() >= deadline) {
+                    // Verification never completed (a failed lazy chunk can block it).
+                    // Answer anyway with the guarded settings below so TweetDeck can
+                    // show its login screen instead of a spinner that never resolves.
+                    console.warn('Account verification did not complete in time; answering with an empty account');
+                    break;
+                }
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            emulateResponse(xhr);
+        },
         afterRequest: (xhr) => {
             const state = {
                 client: {
@@ -2631,8 +2647,8 @@ const proxyRoutes = [
                     mtime: new Date().toISOString(),
                     name: "blackbird",
                     settings: settings ?? {
-                        account_whitelist: [`twitter:${verifiedUser.id_str}`],
-                        default_account: `twitter:${verifiedUser.id_str}`,
+                        account_whitelist: verifiedUser?.id_str ? [`twitter:${verifiedUser.id_str}`] : [],
+                        default_account: verifiedUser?.id_str ? `twitter:${verifiedUser.id_str}` : null,
                         recent_searches: [],
                         display_sensitive_media: false,
                         name_cache: {

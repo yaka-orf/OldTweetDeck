@@ -46,3 +46,27 @@ fall back to the hosted solver.
    `Solver initialized successfully`. If it shows
    `local solver did not initialize, falling back to the hosted solver`, the
    sandbox iframe did not come up (check for a CSP error on the frame).
+
+## Cold-start stall (#547)
+
+On a cold start TweetDeck asks for its initial state (`/1.1/tweetdeck/clients/blackbird/all`)
+while account verification is still running. The state handler built the default
+settings from `verifiedUser.id_str`, so before verification finished it threw
+`TypeError: Cannot read properties of undefined (reading 'id_str')`, the state was
+never answered, and the deck stayed on the loading spinner. Reloading the tab fixed it.
+
+Changes in `src/interception.js`:
+
+- `feeds` and `columns` start as `{}`. They were `undefined`, and `JSON.stringify`
+  of that wrote the literal string `"undefined"` into localStorage, which then failed
+  to parse on the next start and left `settings` empty.
+- The state handler waits up to 8 seconds for `verifiedUser.id_str`, then answers
+  anyway with a guarded fallback (`account_whitelist: []`, `default_account: null`),
+  so the login screen can appear instead of a spinner that never resolves.
+- `emulateResponse` keeps a status a handler already set (`xhr._status ?? 200`).
+
+`src/injection.js` no longer replaces `interception.js` with the upstream copy for the
+same reason as `challenge.js`: the upstream copy would undo the fix above.
+
+Note: a missing lazy chunk (`ChunkLoadError`) can still block verification and leave
+the deck at the login screen. That is a separate problem from the crash above.
