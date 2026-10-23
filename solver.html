@@ -22,6 +22,7 @@
 		// as a sandbox page in manifest.json, so it runs in an opaque origin without
 		// access to extension APIs, cookies or the page's DOM.
 		console.log("[OTD solver] local solver loaded");
+		window.__otdSolverState = "loaded";
 
 		function sleep(ms) {
 			return new Promise((resolve) => setTimeout(resolve, ms));
@@ -38,6 +39,7 @@
 				return;
 			}
 			let data = event.data;
+			window.__otdSolverState = "msg:" + (event.data && event.data.action);
 			if (data.action === "init") {
 				try {
 					if (inited) return;
