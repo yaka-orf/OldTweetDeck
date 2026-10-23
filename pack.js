@@ -9,7 +9,7 @@ async function copyDir(src, dest) {
     const entries = await fsp.readdir(src, { withFileTypes: true });
     await fsp.mkdir(dest);
     for (let entry of entries) {
-        if(entry.name === '.git' || entry.name === '.github' || entry.name === '_metadata' || entry.name === 'node_modules' || entry.name === 'build') continue;
+        if(entry.name === '.git' || entry.name === '.github' || entry.name === '_metadata' || entry.name === 'node_modules' || entry.name === 'build' || entry.name === 'tests') continue;
         const srcPath = path.join(src, entry.name);
         const destPath = path.join(dest, entry.name);
         if (entry.isDirectory()) {
@@ -47,6 +47,8 @@ copyDir('./', './build/OldTweetDeckFirefox').then(async () => {
     manifest.manifest_version = 2;
     manifest.host_permissions.push("https://tweetdeck.dimden.dev/*", "https://raw.githubusercontent.com/*");
     delete manifest.declarative_net_request;
+    // Firefox has no sandbox page support, so the solver stays on the hosted copy there.
+    delete manifest.sandbox;
     manifest.permissions.push("webRequest", "webRequestBlocking", ...manifest.host_permissions);
     delete manifest.host_permissions;
     for(let content_script of manifest.content_scripts) {
