@@ -628,6 +628,24 @@ function exactId(value) {
     return Number.isSafeInteger(num) ? num : str;
 }
 
+// A notification entry carries `content.notification` with fromUsers / targetTweets, while
+// `globalObjects.notifications[id].template.aggregateUserActionsV1` holds the same ids in an
+// older shape and is not always present. Read both, in that order (#549).
+function notificationPayload(go, item) {
+    const notif = (item && item.content && item.content.notification) || {};
+    const stored = (go && go.notifications && notif.id) ? go.notifications[notif.id] : null;
+    const aggregate = (stored && stored.template && stored.template.aggregateUserActionsV1) || null;
+    let users = Array.isArray(notif.fromUsers) ? notif.fromUsers.slice() : [];
+    let tweets = Array.isArray(notif.targetTweets) ? notif.targetTweets.slice() : [];
+    if (!users.length && aggregate && Array.isArray(aggregate.fromUsers)) {
+        users = aggregate.fromUsers.map((u) => u && u.user && u.user.id).filter(Boolean);
+    }
+    if (!tweets.length && aggregate && Array.isArray(aggregate.targetObjects)) {
+        tweets = aggregate.targetObjects.map((t) => t && t.tweet && t.tweet.id).filter(Boolean);
+    }
+    return {notif, users, tweets, aggregate};
+}
+
 function generateParams(features, variables, fieldToggles) {
     let params = new URLSearchParams();
     params.append("variables", JSON.stringify(variables));
@@ -1511,10 +1529,10 @@ const proxyRoutes = [
                                 case "user_liked_multiple_tweets": 
                                 case "users_liked_your_retweet":
                                 case "users_liked_your_tweet": {
-                                    const nf = go.notifications[notif.id];
-                                    const actions = nf.template.aggregateUserActionsV1;
-                                    const users = actions.fromUsers.map(u => u.user.id);
-                                    const tweets = actions.targetObjects.map(t => t.tweet.id);
+                                    const payload = notificationPayload(go, item);
+                                    const users = payload.users;
+                                    const tweets = payload.tweets;
+                                    if (!users.length || !tweets.length) continue;
                                     let i = 0;
                                     for(const userId of users) {
                                         for(const tweetId of tweets) {
@@ -1554,10 +1572,13 @@ const proxyRoutes = [
                                 case "user_mentioned_you":
                                 case "user_replied_to_your_tweet": 
                                 case "user_quoted_your_tweet":{
-                                    const tweetId = item.content.tweet.id;
-                                    const tweet = go.tweets[tweetId];
-                                    if(!tweet) continue;
-                                    tweet.user = go.users[tweet.user_id_str];
+                                    const payload = notificationPayload(go, item);
+                                    const tweetId = (item.content.tweet && item.content.tweet.id) || payload.tweets[0];
+                                    const tweet = tweetId ? go.tweets[tweetId] : null;
+                                    // The entry may not name the tweet author; fall back to the
+                                    // account that produced the notification (#549).
+                                    if (!tweet) continue;
+                                    tweet.user = go.users[tweet.user_id_str] || (payload.users[0] ? go.users[payload.users[0]] : null);
                                     const type = item.clientEventInfo.element === "user_mentioned_you" ? "mention" : item.clientEventInfo.element === "user_replied_to_your_tweet" ? "reply" : "quote";
                                     
                                     const id = `${tweetId}-${tweet.user_id_str}-${type}`;
@@ -1585,8 +1606,7 @@ const proxyRoutes = [
                                 }
                                 case "follow_from_recommended_user":
                                 case "users_followed_you": {
-                                    const nf = go.notifications[notif.id];
-                                    const users = nf.template.aggregateUserActionsV1.fromUsers.map(u => u.user.id);
+                                    const users = notificationPayload(go, item).users;
                                     for(const userId of users) {
                                         const user = go.users[userId];
                                         if(!user) continue;
@@ -1686,10 +1706,11 @@ const proxyRoutes = [
                             case "user_mentioned_you":
                             case "user_replied_to_your_tweet": 
                             case "user_quoted_your_tweet":{
-                                const tweetId = item.content.tweet.id;
-                                const tweet = go.tweets[tweetId];
-                                if(!tweet) continue;
-                                tweet.user = go.users[tweet.user_id_str];
+                                const payload = notificationPayload(go, item);
+                                const tweetId = (item.content.tweet && item.content.tweet.id) || payload.tweets[0];
+                                const tweet = tweetId ? go.tweets[tweetId] : null;
+                                if (!tweet) continue;
+                                tweet.user = go.users[tweet.user_id_str] || (payload.users[0] ? go.users[payload.users[0]] : null);
 
                                 if(tweet.quoted_status_id_str) {
                                     tweet.quoted_status = go.tweets[tweet.quoted_status_id_str];
