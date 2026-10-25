@@ -140,3 +140,19 @@ as one tweet. The fork's own `files/bundle.js` already prefers the string
 Not verified against live data. To confirm: follow an account with a busy timeline and
 compare the deck's tweet count against `x.com/home`; the truncation shows up as tweets
 that never appear.
+
+## A background tab keeps showing old tweets (#530)
+
+While the tab is hidden Chrome throttles its timers, and the deck's own catch-up on focus
+is not dependable, so the columns sit on whatever they held when the tab was last looked
+at (an hour old is the usual report).
+
+`src/interception.js` now listens for `visibilitychange`: when the tab becomes visible it
+
+- clears every `timings` entry, so the cancel heuristic in `openHandler` cannot swallow
+  the first poll
+- calls `refresh({reset: true})` on every poller in `TD.controller.feedManager`, which is
+  the deck's own full refresh
+
+Not verified live. To confirm: hide the deck for ten minutes, come back, and the Home
+column should fill immediately without an F5.

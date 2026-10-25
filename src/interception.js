@@ -8,6 +8,32 @@ const OTD_INIT_TIME = Date.now();
 // Videos: x.com/i/videos/* used to serve the tweet player, but it now answers 200 with an
 // empty body, so the frame stays blank and nothing plays. Point those frames at the
 // bundled player instead. VIDEO_PAGE_URL is replaced with the extension URL by injection.js.
+// A tab that sat in the background keeps showing what it had when it was last looked at
+// (#530). Chrome throttles the pollers of a hidden tab and the deck's own refresh on
+// regaining focus is not reliable, so force one poll of every feed when the tab becomes
+// visible again. timings is cleared first, otherwise the cancel heuristic in openHandler
+// can swallow the request.
+document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    for (const group of Object.values(timings)) {
+        for (const key of Object.keys(group)) group[key] = 0;
+    }
+    try {
+        const feedManager = window.TD?.controller?.feedManager;
+        if (!feedManager) return;
+        const keys = typeof feedManager.getFeedKeys === "function" ? feedManager.getFeedKeys() : [];
+        for (const key of keys) {
+            try {
+                feedManager.getPoller(key)?.refresh({reset: true});
+            } catch (e) {
+                console.warn("[OTD] could not refresh feed", key, e);
+            }
+        }
+    } catch (e) {
+        console.warn("[OTD] visibility refresh failed", e);
+    }
+});
+
 const OTD_VIDEO_PAGE = "VIDEO_PAGE_URL";
 (function otdVideoFrames() {
     const isDeadPlayer = (src) => /^https?:\/\/(?:www\.)?(?:twitter|x)\.com\/i\/videos\//.test(src || "");
