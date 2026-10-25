@@ -1126,6 +1126,8 @@ const proxyRoutes = [
             xhr.modReqHeaders["X-Twitter-Active-User"] = "yes";
             xhr.modReqHeaders["X-Twitter-Client-Language"] = "en";
             xhr.modReqHeaders["Authorization"] = PUBLIC_TOKENS[0];
+            // GraphQL rejects the call with 403 unless the session auth type is stated.
+            xhr.modReqHeaders["X-Twitter-Auth-Type"] = "OAuth2Session";
             delete xhr.modReqHeaders["X-Twitter-Client-Version"];
         },
         afterRequest: (xhr) => {
