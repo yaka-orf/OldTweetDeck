@@ -83,7 +83,23 @@ async function readCryptoKey() {
     });
 }
 
-function solveChallenge(path, method) {
+function waitForSolver(limitMs) {
+    // The solver answers "ready" once init has run. Requests that arrive before
+    // that used to fail and were never retried, which on a cold start left the
+    // deck with no account and pushed it to the login screen.
+    return new Promise(resolve => {
+        if (ready || solverErrored) return resolve(ready);
+        const started = Date.now();
+        const timer = setInterval(() => {
+            if (ready || solverErrored || Date.now() - started >= limitMs) {
+                clearInterval(timer);
+                resolve(ready);
+            }
+        }, 100);
+    });
+}
+
+function solveChallengeOnce(path, method, timeoutMs) {
     return new Promise((resolve, reject) => {
         if(solverErrored) {
             reject('Solver errored');
@@ -91,38 +107,47 @@ function solveChallenge(path, method) {
         }
         let id = solveId++;
         solveCallbacks[id] = { resolve, reject, time: Date.now() };
-        if(!solverIframe.contentWindow) {
-            solverIframe.addEventListener('load', () => {
-                solverIframe.contentWindow.postMessage({ action: 'solve', id, path, method }, '*');
-                setTimeout(() => {
-                    if(solveCallbacks[id]) {
-                        // try again
-                        solverIframe.contentWindow.postMessage({ action: 'solve', id, path, method }, '*');
-                    }
-                }, 5000);
-                setTimeout(() => {
-                    if(solveCallbacks[id]) {
-                        solveCallbacks[id].reject('Solver timed out');
-                        delete solveCallbacks[id];
-                    }
-                }, 20000);
-            });
-        } else {
+        const post = () => {
+            if(!solverIframe.contentWindow) return false;
             solverIframe.contentWindow.postMessage({ action: 'solve', id, path, method }, '*');
-            setTimeout(() => {
-                if(solveCallbacks[id]) {
-                    // try again
-                    solverIframe.contentWindow.postMessage({ action: 'solve', id, path, method }, '*');
-                }
-            }, 5000);
-            setTimeout(() => {
-                if(solveCallbacks[id]) {
-                    solveCallbacks[id].reject('Solver timed out');
-                    delete solveCallbacks[id];
-                }
-            }, 20000);
+            return true;
+        };
+        if(!solverIframe.contentWindow) {
+            solverIframe.addEventListener('load', () => { post(); }, { once: true });
+        } else {
+            post();
         }
+        setTimeout(() => {
+            if(solveCallbacks[id]) post();
+        }, Math.floor(timeoutMs / 2));
+        setTimeout(() => {
+            if(solveCallbacks[id]) {
+                solveCallbacks[id].reject('Solver timed out');
+                delete solveCallbacks[id];
+            }
+        }, timeoutMs);
     });
+}
+
+const OTD_SOLVER_READY_WAIT_MS = 20000;
+const OTD_SOLVE_ATTEMPTS = 3;
+const OTD_SOLVE_ATTEMPT_MS = 6000;
+
+async function solveChallenge(path, method) {
+    if(!ready && !solverErrored) await waitForSolver(OTD_SOLVER_READY_WAIT_MS);
+    let lastError = 'Solver timed out';
+    for(let attempt = 1; attempt <= OTD_SOLVE_ATTEMPTS; attempt++) {
+        if(solverErrored) throw new Error('Solver errored');
+        try {
+            return await solveChallengeOnce(path, method, OTD_SOLVE_ATTEMPT_MS);
+        } catch(e) {
+            lastError = e;
+            if(String(e) === 'Solver errored') throw e;
+            console.warn(`[OTD] challenge attempt ${attempt} failed (${e})`);
+            await new Promise(resolve => setTimeout(resolve, 400 * attempt));
+        }
+    }
+    throw lastError;
 }
 
 window.addEventListener('message', e => {
