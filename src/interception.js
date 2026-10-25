@@ -827,6 +827,28 @@ function emulateResponse(xhr) {
 let counter = 0;
 let bookmarkTimes = {};
 const OriginalXHR = XMLHttpRequest;
+// The X client reads list members through GraphQL now; the v1.1 route the deck calls
+// (/1.1/lists/members.json) answers 404 "page does not exist" (#548).
+const LIST_MEMBERS_OP = "fFCNliJG5Gq4yEnINo6-1A";
+const LIST_MEMBERS_FEATURES = {"rweb_video_screen_enabled":false,"profile_label_improvements_pcf_label_in_post_enabled":true,"responsive_web_profile_redirect_enabled":false,"rweb_tipjar_consumption_enabled":true,"verified_phone_label_enabled":false,"creator_subscriptions_tweet_preview_api_enabled":true,"responsive_web_graphql_timeline_navigation_enabled":true,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"premium_content_api_read_enabled":false,"communities_web_enable_tweet_community_results_fetch":true,"c9s_tweet_anatomy_moderator_badge_enabled":true,"articles_preview_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"tweet_awards_web_tipping_enabled":false,"freedom_of_speech_not_reach_fetch_enabled":true,"standardized_nudges_misinfo":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_inline_media_enabled":true,"responsive_web_enhance_cards_enabled":false};
+
+function parseMemberUser(result) {
+    if (!result) return null;
+    const user = Object.assign({}, result.legacy || {});
+    const core = result.core || {};
+    user.id_str = result.rest_id || user.id_str || core.id_str;
+    user.screen_name = core.screen_name || user.screen_name;
+    user.name = core.name || user.name;
+    if (!user.id_str) return null;
+    if (!user.id) user.id = exactId(user.id_str);
+    if (!user.profile_image_url_https && result.avatar && result.avatar.image_url) {
+        user.profile_image_url_https = result.avatar.image_url;
+    }
+    if (!user.profile_image_url && user.profile_image_url_https) {
+        user.profile_image_url = user.profile_image_url_https.replace("https://", "http://");
+    }
+    return user;
+}
 const proxyRoutes = [
     // Home timeline
     {
@@ -1021,6 +1043,73 @@ const proxyRoutes = [
             xhr.storage.data = tweets;
 
             return tweets;
+        },
+    },
+    // List members
+    {
+        path: "/1.1/lists/members.json",
+        method: "GET",
+        beforeRequest: (xhr) => {
+            try {
+                const params = new URLSearchParams(xhr.modUrl.slice(xhr.modUrl.indexOf("?")));
+                const listId = params.get("list_id");
+                if (!listId) return;
+                const count = Number(params.get("count")) || 20;
+                const variables = {listId: String(listId), count: count};
+                const cursorTop = cursors[`list-members-${listId}-top`];
+                const cursorBottom = cursors[`list-members-${listId}-bottom`];
+                if (params.get("max_id") && cursorBottom) variables.cursor = cursorBottom;
+                else if (params.get("since_id") && cursorTop) variables.cursor = cursorTop;
+                xhr.storage.list_id = String(listId);
+                xhr.modUrl = `${NEW_API}/${LIST_MEMBERS_OP}/ListMembers?${generateParams(LIST_MEMBERS_FEATURES, variables)}`;
+            } catch (e) {
+                console.error(e);
+            }
+        },
+        beforeSendHeaders: (xhr) => {
+            xhr.modReqHeaders["Content-Type"] = "application/json";
+            xhr.modReqHeaders["X-Twitter-Active-User"] = "yes";
+            xhr.modReqHeaders["X-Twitter-Client-Language"] = "en";
+            xhr.modReqHeaders["Authorization"] = PUBLIC_TOKENS[0];
+            delete xhr.modReqHeaders["X-Twitter-Client-Version"];
+        },
+        afterRequest: (xhr) => {
+            const empty = {users: [], next_cursor_str: "0", previous_cursor_str: "0"};
+            try {
+                const data = JSON.parse(xhr.responseText);
+                const instructions = data?.data?.list?.members_timeline?.timeline?.instructions;
+                if (!Array.isArray(instructions)) return empty;
+                const entries = [];
+                for (const instruction of instructions) {
+                    if (Array.isArray(instruction.entries)) entries.push(...instruction.entries);
+                }
+                const users = [];
+                let nextCursor = "0";
+                let previousCursor = "0";
+                for (const entry of entries) {
+                    const content = entry.content || {};
+                    if (content.cursorType === "Bottom" || /^cursor-bottom-/.test(entry.entryId || "")) {
+                        nextCursor = content.value || nextCursor;
+                        continue;
+                    }
+                    if (content.cursorType === "Top" || /^cursor-top-/.test(entry.entryId || "")) {
+                        previousCursor = content.value || previousCursor;
+                        continue;
+                    }
+                    const result = content.itemContent?.user_results?.result;
+                    const user = parseMemberUser(result);
+                    if (user) users.push(user);
+                }
+                const listId = xhr.storage.list_id;
+                if (listId) {
+                    if (nextCursor && nextCursor !== "0") cursors[`list-members-${listId}-bottom`] = nextCursor;
+                    if (previousCursor && previousCursor !== "0") cursors[`list-members-${listId}-top`] = previousCursor;
+                }
+                return {users: users, next_cursor_str: nextCursor, previous_cursor_str: previousCursor};
+            } catch (e) {
+                console.error("Error parsing list members", e);
+                return empty;
+            }
         },
     },
     // List timeline
