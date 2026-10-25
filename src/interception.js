@@ -643,6 +643,10 @@ function pollMentions() {
         const xhr = new XMLHttpRequest();
         // Absolute: the proxy parses the URL with new URL(), which rejects a bare path.
         xhr.open("GET", location.origin + "/1.1/statuses/mentions_timeline.json?count=20&tweet_mode=extended&include_entities=1", true);
+        // A request this code starts itself carries no csrf header, and X answers 353
+        // ("requires a matching csrf cookie and header") without it.
+        const ct0 = (document.cookie.match(/(?:^|;\s*)ct0=([0-9a-f]+)/) || [])[1];
+        if (ct0) xhr.setRequestHeader("x-csrf-token", ct0);
         xhr.timeout = 20000;
         xhr.onload = () => {
             try {
