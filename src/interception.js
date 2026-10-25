@@ -631,6 +631,51 @@ function exactId(value) {
 // A notification entry carries `content.notification` with fromUsers / targetTweets, while
 // `globalObjects.notifications[id].template.aggregateUserActionsV1` holds the same ids in an
 // older shape and is not always present. Read both, in that order (#549).
+// The Home column asks for the home timeline only, and that no longer carries the replies
+// aimed at you, so mentions disappeared from it (#552). afterRequest is synchronous, so the
+// mentions timeline is polled separately and folded in from a cache.
+let recentMentions = [];
+let mentionsPollTimer = null;
+
+function pollMentions() {
+    if (document.hidden) return;
+    try {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", "/1.1/statuses/mentions_timeline.json?count=20&tweet_mode=extended&include_entities=1", true);
+        xhr.timeout = 20000;
+        xhr.onload = () => {
+            try {
+                const parsed = JSON.parse(xhr.responseText);
+                if (Array.isArray(parsed)) recentMentions = parsed;
+            } catch (e) {
+                console.warn("[OTD] could not read mentions", e);
+            }
+        };
+        xhr.send();
+    } catch (e) {
+        console.warn("[OTD] mention poll failed", e);
+    }
+}
+
+function startMentionsPoll() {
+    if (mentionsPollTimer) return;
+    mentionsPollTimer = setInterval(pollMentions, 60000);
+    setTimeout(pollMentions, 5000);
+}
+
+function mergeMentions(tweets) {
+    if (!Array.isArray(tweets) || !Array.isArray(recentMentions) || !recentMentions.length) return tweets;
+    const known = new Set(tweets.map((t) => t && t.id_str).filter(Boolean));
+    let added = 0;
+    for (const mention of recentMentions) {
+        if (!mention || !mention.id_str || known.has(mention.id_str)) continue;
+        known.add(mention.id_str);
+        tweets.push(mention);
+        added++;
+    }
+    if (added) tweets.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return tweets;
+}
 function notificationPayload(go, item) {
     const notif = (item && item.content && item.content.notification) || {};
     const stored = (go && go.notifications && notif.id) ? go.notifications[notif.id] : null;
@@ -827,6 +872,7 @@ function emulateResponse(xhr) {
 let counter = 0;
 let bookmarkTimes = {};
 const OriginalXHR = XMLHttpRequest;
+startMentionsPoll();
 // The X client reads list members through GraphQL now; the v1.1 route the deck calls
 // (/1.1/lists/members.json) answers 404 "page does not exist" (#548).
 const LIST_MEMBERS_OP = "fFCNliJG5Gq4yEnINo6-1A";
@@ -1039,6 +1085,10 @@ const proxyRoutes = [
                 if(tweets[0]) cursors[`home-${xhr.storage.user_id}-${tweets[0].id_str}-top`] = topCursor;
                 if(tweets[1]) cursors[`home-${xhr.storage.user_id}-${tweets[1].id_str}-top`] = topCursor;
             }
+
+            // A since_id poll only carries what is new, so fold mentions into the first page
+            // only; otherwise older mentions keep coming back to the top (#552).
+            if (!xhr.storage.since_id) mergeMentions(tweets);
 
             xhr.storage.data = tweets;
 
