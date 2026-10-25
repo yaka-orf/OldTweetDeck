@@ -123,3 +123,20 @@ times, and the `profile-conversation` branch compared `tweet.user.id_str` agains
 - cursor and `bookmarkTimes` keys include that account id
 - `parseTweet` is wrapped per entry, so one malformed bookmark no longer empties the
   column (the `Cannot read properties of undefined (reading 'legacy')` report)
+
+## Tweet ids lose their last digits (#531)
+
+`parseTweet` built the numeric fields with `+id_str`, and the v1.1 compat path with
+`parseInt`. Tweet ids have been above 2^53 since 2016, so two neighbouring tweets can
+round onto the same number; anything that uses the number as an identity then treats them
+as one tweet. The fork's own `files/bundle.js` already prefers the string
+(`this.id = e.id_str || e.id`), so keeping the exact digits as a string is compatible.
+
+- new `exactId(value)`: returns a Number only when the value is a safe integer, otherwise
+  the original digits as a string
+- applied to every `+..._id_str` coercion (12) and every `parseInt(...id_str)` / `parseInt(id)`
+  in the v1.1 path (4)
+
+Not verified against live data. To confirm: follow an account with a busy timeline and
+compare the deck's tweet count against `x.com/home`; the truncation shows up as tweets
+that never appear.

@@ -291,16 +291,16 @@ function parseTweet(res) {
         let tweet = res.legacy;
         if (!res.core || !tweet) return;
         if(!tweet.id) {
-            tweet.id = +tweet.id_str;
+            tweet.id = exactId(tweet.id_str);
         }
         let result = res.core.user_results.result;
-        tweet.conversation_id = +tweet.conversation_id_str;
+        tweet.conversation_id = exactId(tweet.conversation_id_str);
         tweet.text = tweet.full_text;
         // X is migrating user fields out of `legacy` into `core`/`avatar`/etc,
         // so `legacy` can now be missing entirely. The fallbacks below already
         // repopulate name/screen_name/avatar/created_at from the new shape.
         tweet.user = result.legacy || {};
-        tweet.user.id = +tweet.user_id_str;
+        tweet.user.id = exactId(tweet.user_id_str);
         tweet.user.id_str = tweet.user_id_str;
         if (result.is_blue_verified) {
             tweet.user.verified = true;
@@ -361,14 +361,14 @@ function parseTweet(res) {
                 result.legacy.quoted_status = result.quoted_status_result.result.legacy;
                 const quotedCard = parseTweetCard(result.quoted_status_result.result.card);
                 if (quotedCard) result.legacy.quoted_status.card = quotedCard;
-                result.legacy.quoted_status.id = +result.legacy.quoted_status.id_str;
+                result.legacy.quoted_status.id = exactId(result.legacy.quoted_status.id_str);
                 result.legacy.quoted_status.text = result.legacy.quoted_status.full_text;
-                result.legacy.quoted_status.conversation_id = +result.legacy.quoted_status.conversation_id_str;
+                result.legacy.quoted_status.conversation_id = exactId(result.legacy.quoted_status.conversation_id_str);
                 if (result.legacy.quoted_status) {
                     result.legacy.quoted_status.user =
                         result.quoted_status_result.result.core.user_results.result.legacy;
                     result.legacy.quoted_status.user.id_str = result.legacy.quoted_status.user_id_str;
-                    result.legacy.quoted_status.user.id = +result.legacy.quoted_status.user_id_str;
+                    result.legacy.quoted_status.user.id = exactId(result.legacy.quoted_status.user_id_str);
                     let user_result = result?.quoted_status_result?.result?.core?.user_results?.result;
                     if(!result.legacy.quoted_status.user.profile_image_url && user_result?.avatar?.image_url) {
                         result.legacy.quoted_status.user.profile_image_url = user_result.avatar.image_url;
@@ -414,11 +414,11 @@ function parseTweet(res) {
             if (tweet.retweeted_status && result.core.user_results.result.legacy) {
                 let user_result = result?.core?.user_results?.result;
                 tweet.retweeted_status.text = tweet.retweeted_status.full_text;
-                tweet.retweeted_status.id = +tweet.retweeted_status.id_str;
-                tweet.retweeted_status.conversation_id = +tweet.retweeted_status.conversation_id_str;
+                tweet.retweeted_status.id = exactId(tweet.retweeted_status.id_str);
+                tweet.retweeted_status.conversation_id = exactId(tweet.retweeted_status.conversation_id_str);
                 tweet.retweeted_status.user = user_result.legacy;
                 tweet.retweeted_status.user.id_str = tweet.retweeted_status.user_id_str;
-                tweet.retweeted_status.user.id = +tweet.retweeted_status.user_id_str;
+                tweet.retweeted_status.user.id = exactId(tweet.retweeted_status.user_id_str);
                 if(!tweet.retweeted_status.user.profile_image_url && user_result?.avatar?.image_url) {
                     tweet.retweeted_status.user.profile_image_url = user_result.avatar.image_url;
                     tweet.retweeted_status.user.profile_image_url_https = tweet.retweeted_status.user.profile_image_url.replace("http://", "https://");
@@ -499,8 +499,8 @@ function parseTweet(res) {
                 tweet.quoted_status = result.legacy;
                 const quotedCard = parseTweetCard(result.card);
                 if (quotedCard) tweet.quoted_status.card = quotedCard;
-                tweet.quoted_status.id = +tweet.quoted_status.id_str;
-                tweet.quoted_status.conversation_id = +tweet.quoted_status.conversation_id_str;
+                tweet.quoted_status.id = exactId(tweet.quoted_status.id_str);
+                tweet.quoted_status.conversation_id = exactId(tweet.quoted_status.conversation_id_str);
                 tweet.quoted_status.text = tweet.quoted_status.full_text;
                 if (tweet.quoted_status) {
                     tweet.quoted_status.user = result.core.user_results.result.legacy;
@@ -508,7 +508,7 @@ function parseTweet(res) {
                         delete tweet.quoted_status;
                     } else {
                         tweet.quoted_status.user.id_str = tweet.quoted_status.user_id_str;
-                        tweet.quoted_status.user.id = +tweet.quoted_status.user_id_str;
+                        tweet.quoted_status.user.id = exactId(tweet.quoted_status.user_id_str);
                         let user_result = result?.core?.user_results?.result;
                         if(!tweet.quoted_status.user.profile_image_url && user_result?.avatar?.image_url) {
                             tweet.quoted_status.user.profile_image_url = user_result.avatar.image_url;
@@ -588,6 +588,18 @@ function getCurrentUserId() {
     let screen_name = TD.storage.accountController.getUserIdentifier();
     let account = accounts.find((account) => account.state.username === screen_name);
     return account?.state?.userId ?? verifiedUser?.id_str ?? localStorage.twitterAccountID;
+}
+
+// Tweet ids went past 2^53 in 2016, so `+id_str` and `parseInt(id_str)` round two
+// neighbouring tweets onto the same number. TweetDeck keeps its own id as
+// `id_str || id`, so handing it the exact digits as a string is compatible and stops
+// different tweets from sharing one identity (#531).
+function exactId(value) {
+    if (value === undefined || value === null || value === "") return value;
+    const str = String(value);
+    if (!/^[0-9]+$/.test(str)) return value;
+    const num = Number(str);
+    return Number.isSafeInteger(num) ? num : str;
 }
 
 function generateParams(features, variables, fieldToggles) {
@@ -2461,12 +2473,12 @@ const proxyRoutes = [
 
                 if (!tweet.contributors) tweet.contributors = null;
                 if (tweet.conversation_id_str)
-                    tweet.conversation_id = parseInt(tweet.conversation_id_str);
+                    tweet.conversation_id = exactId(tweet.conversation_id_str);
                 if (!tweet.coordinates) tweet.coordinates = null;
                 if (!tweet.conversation_muted) tweet.conversation_muted = false;
                 if (!tweet.favorited) tweet.favorited = false;
                 if (!tweet.geo) tweet.geo = null;
-                if (!tweet.id) tweet.id = parseInt(id);
+                if (!tweet.id) tweet.id = exactId(id);
                 if (!tweet.in_reply_to_screen_name) tweet.in_reply_to_screen_name = null;
                 if (!tweet.in_reply_to_status_id) tweet.in_reply_to_status_id = null;
                 if (!tweet.in_reply_to_status_id_str) tweet.in_reply_to_status_id_str = null;
@@ -2477,7 +2489,7 @@ const proxyRoutes = [
                 if (!tweet.supplemental_language) tweet.supplemental_language = null;
                 if (!tweet.retweeted) tweet.retweeted = false;
                 if (!tweet.truncated) tweet.truncated = false;
-                if (!tweet.user_id) tweet.user_id = parseInt(tweet.user_id_str);
+                if (!tweet.user_id) tweet.user_id = exactId(tweet.user_id_str);
             }
 
             for (let id in data.globalObjects.users) {
@@ -2495,7 +2507,7 @@ const proxyRoutes = [
                 if (!user.is_translation_enabled) user.is_translation_enabled = false;
                 if (!user.is_translator) user.is_translator = false;
                 if (!user.followed_by) user.followed_by = false;
-                if (!user.id) user.id = parseInt(id);
+                if (!user.id) user.id = exactId(id);
                 if (!user.lang) user.lang = null;
                 if (!user.notifications) user.notifications = false;
                 if (!user.profile_background_color) user.profile_background_color = "C0DEED";
