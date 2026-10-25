@@ -641,7 +641,8 @@ function pollMentions() {
     if (document.hidden) return;
     try {
         const xhr = new XMLHttpRequest();
-        xhr.open("GET", "/1.1/statuses/mentions_timeline.json?count=20&tweet_mode=extended&include_entities=1", true);
+        // Absolute: the proxy parses the URL with new URL(), which rejects a bare path.
+        xhr.open("GET", location.origin + "/1.1/statuses/mentions_timeline.json?count=20&tweet_mode=extended&include_entities=1", true);
         xhr.timeout = 20000;
         xhr.onload = () => {
             try {
