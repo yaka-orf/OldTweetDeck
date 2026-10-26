@@ -914,6 +914,119 @@ const HOME_TIMELINE_OP = "0toR0MxC06yY3Fc57GXBpA";
 const HOME_TIMELINE_FEATURES = {"rweb_video_screen_enabled":false,"rweb_cashtags_enabled":true,"profile_label_improvements_pcf_label_in_post_enabled":true,"responsive_web_profile_redirect_enabled":true,"rweb_tipjar_consumption_enabled":false,"verified_phone_label_enabled":false,"creator_subscriptions_tweet_preview_api_enabled":true,"responsive_web_graphql_timeline_navigation_enabled":true,"premium_content_api_read_enabled":false,"communities_web_enable_tweet_community_results_fetch":true,"c9s_tweet_anatomy_moderator_badge_enabled":true,"responsive_web_grok_analyze_button_fetch_trends_enabled":false,"responsive_web_grok_analyze_post_followups_enabled":true,"rweb_cashtags_composer_attachment_enabled":true,"responsive_web_jetfuel_frame":true,"rweb_sports_post_context_enabled":true,"responsive_web_grok_share_attachment_enabled":true,"responsive_web_grok_annotations_enabled":true,"articles_preview_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"rweb_conversational_replies_downvote_enabled":false,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"content_disclosure_indicator_enabled":true,"content_disclosure_ai_generated_indicator_enabled":true,"responsive_web_grok_show_grok_translated_post":true,"responsive_web_grok_analysis_button_from_backend":true,"post_ctas_fetch_enabled":false,"freedom_of_speech_not_reach_fetch_enabled":true,"standardized_nudges_misinfo":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_inline_media_enabled":false,"responsive_web_nested_quote_preview_enabled":true,"responsive_web_grok_image_annotation_enabled":true,"responsive_web_grok_imagine_annotation_enabled":true,"responsive_web_made_on_x_label_enabled":false,"responsive_web_grok_community_note_auto_translation_is_enabled":true,"responsive_web_enhance_cards_enabled":false};
 const algoLists = new Map([[FORYOU_LIST_ID, { tag: null, name: "\u{1F52E} For you" }]]);
 
+// Topic timelines are the same HomeTimeline query plus a `tag` variable, so each one
+// is just another synthetic list. Ids are handed out from a reserved range and kept
+// in localStorage, so a topic keeps its column id across reloads.
+const TOPIC_LIST_ID_BASE = 900000000000010n;
+let topicListIds = {};
+try {
+    topicListIds = JSON.parse(localStorage.OTDalgoTopics || "{}");
+} catch (e) {
+    topicListIds = {};
+}
+
+function listIdForTopic(tag) {
+    if (topicListIds[tag]) return topicListIds[tag];
+    const id = String(TOPIC_LIST_ID_BASE + BigInt(Object.keys(topicListIds).length));
+    topicListIds[tag] = id;
+    localStorage.OTDalgoTopics = JSON.stringify(topicListIds);
+    return id;
+}
+
+function registerAlgoTopics(topics) {
+    for (const topic of topics) {
+        const listId = listIdForTopic(String(topic.tag));
+        const existing = algoLists.get(listId);
+        algoLists.set(listId, { tag: String(topic.tag), name: topic.name });
+        if (existing && existing.name !== topic.name) existing.name = topic.name;
+    }
+}
+
+// Captured from X's PinnedTimelinesManagementSheetQuery; the ids are global entities,
+// so one catalog serves every account. OTDalgoTopicsManual adds or renames entries.
+const ALGO_TOPIC_CATALOG = [
+    { tag: "1925949722688126976", name: "Technology" },
+    { tag: "1925953013547450368", name: "Artificial Intelligence" },
+    { tag: "1925949744683114496", name: "Science" },
+    { tag: "1925952876284727296", name: "Stocks & Economy" },
+    { tag: "1925949659857530880", name: "Business & Finance" },
+    { tag: "1925950498420469760", name: "Soccer" },
+    { tag: "1925952771733262336", name: "Politics" },
+    { tag: "1925949452197478400", name: "Sports" },
+    { tag: "1925949898106540032", name: "Art" },
+    { tag: "1925949788068909057", name: "Movies & TV" },
+    { tag: "1925949766673797120", name: "Gaming" },
+    { tag: "1925949693290295298", name: "Crypto" },
+    { tag: "1925951614067650560", name: "NFL" },
+    { tag: "1925949503837798401", name: "Anime" },
+    { tag: "1925949812844769280", name: "Travel" },
+    { tag: "1925949835649126400", name: "Food & Drink" },
+    { tag: "1925950576740675584", name: "Baseball" },
+    { tag: "1925950530842464256", name: "Basketball" },
+    { tag: "1925950199861538818", name: "Beauty" },
+    { tag: "1925950713982537888", name: "Boxing" },
+    { tag: "1925950361245786112", name: "Careers" },
+    { tag: "1925950007624028160", name: "Cars" },
+    { tag: "1925950249245282304", name: "Pets" },
+    { tag: "1925949555071176704", name: "Celebrities" },
+    { tag: "1925949604224196608", name: "Music" },
+    { tag: "1925952353485602816", name: "Country Music" },
+    { tag: "1925949634972626944", name: "News" },
+    { tag: "1925950383899267072", name: "Dance" },
+    { tag: "1925950276835454977", name: "Dating & Relationships" },
+    { tag: "1925954681496322048", name: "Design" },
+    { tag: "1925950405709631490", name: "Education" },
+    { tag: "1925952257893257217", name: "Electronic Music" },
+    { tag: "1925952916411564032", name: "Startups" },
+    { tag: "1925950783448576000", name: "Esports" },
+    { tag: "1925954059338493952", name: "Marriage & Family" },
+    { tag: "1925949932181082112", name: "Fashion" },
+    { tag: "1925952179791151105", name: "Pop" },
+    { tag: "1925950690574180352", name: "Golf" },
+    { tag: "1925952056088530944", name: "K-pop" },
+    { tag: "1925949876694556672", name: "Memes" },
+    { tag: "1925949856834588672", name: "Health & Fitness" },
+    { tag: "1925950600140718080", name: "MMA & Wrestling" },
+    { tag: "1943810034309246976", name: "Racing & Motorsports" },
+    { tag: "1925950100397793280", name: "Motorcycles" },
+    { tag: "1925950228047216640", name: "Nature & Outdoors" },
+    { tag: "1925950813043662848", name: "Ice Hockey" },
+    { tag: "1943811470724153345", name: "Olympics" },
+    { tag: "1925952988486447104", name: "Personal Finance" },
+    { tag: "1925954143472017408", name: "Photography" },
+    { tag: "1925950433807175680", name: "Podcasts" },
+    { tag: "1925952947197784064", name: "Real Estate" },
+    { tag: "1925953169307189248", name: "Robotics" },
+    { tag: "1925952228818354177", name: "Rock" },
+    { tag: "1925950895595876352", name: "Rugby" },
+    { tag: "1925949979966701568", name: "Shopping" },
+    { tag: "1925950954962096130", name: "Winter Sports" },
+    { tag: "1925953040130953216", name: "Software Development" },
+    { tag: "1925953141452718081", name: "Space" },
+    { tag: "1925950625835008001", name: "Tennis" },
+    { tag: "1925950341452845057", name: "Home & Garden" },
+    { tag: "1925950653035151360", name: "Cricket" },
+    { tag: "1925950746756800513", name: "Formula 1" },
+    { tag: "1925950926910582786", name: "Cycling" },
+    { tag: "1925952123960709120", name: "J-pop" },
+    { tag: "1925952145615974400", name: "Concerts" },
+    { tag: "1925952203962896384", name: "Hip Hop" },
+    { tag: "1925952300213768192", name: "Jazz" },
+    { tag: "1925952744239620096", name: "Crime" },
+    { tag: "1925952820714332161", name: "Elections" },
+    { tag: "1925953107038519296", name: "Biotech" },
+    { tag: "1925953421338726400", name: "Mental Health" },
+    { tag: "1925954197326831616", name: "Digital Art" },
+];
+
+registerAlgoTopics(ALGO_TOPIC_CATALOG);
+try {
+    registerAlgoTopics(JSON.parse(localStorage.OTDalgoTopicsManual || "[]"));
+} catch (e) {
+    console.error("[OTD] bad OTDalgoTopicsManual:", e);
+}
+
+
 // A fake owner, deliberately not the real account's id, so the cached profile of the
 // logged-in user is never overwritten by this synthetic list's metadata.
 const FORYOU_FAKE_USER = {
@@ -1009,6 +1122,90 @@ function addAlgoColumn(listId) {
     if (TD.components.OpenColumn.instance) TD.components.OpenColumn.instance.destroy();
 }
 
+// Swaps the column-type grid for a searchable list of For you plus every topic.
+function showAlgoPicker(grid) {
+    const content = grid.parentElement;
+    if (!content || content.querySelector(".otd-algo-picker")) return;
+    const title = content.closest(".js-modal-panel")?.querySelector(".js-header-title");
+    const previousTitle = title ? title.textContent : "";
+
+    const picker = document.createElement("div");
+    picker.className = "otd-algo-picker padding-v--10";
+
+    const back = document.createElement("a");
+    back.href = "#";
+    back.className = "block margin-h--8 margin-b--8 txt-size--13";
+    back.textContent = "\u2190 Column types";
+
+    const search = document.createElement("input");
+    search.type = "search";
+    search.placeholder = "Search topics";
+    search.className = "width-p--85 margin-b--8 margin-h--8 padding-v--0 padding-h--8";
+
+    const list = document.createElement("ul");
+    list.className = "lst-group";
+    list.style.maxHeight = "420px";
+    list.style.overflowY = "auto";
+
+    const entries = [...algoLists.entries()].sort(([a, ma], [b, mb]) => {
+        if (a === FORYOU_LIST_ID) return -1;
+        if (b === FORYOU_LIST_ID) return 1;
+        return ma.name.localeCompare(mb.name);
+    });
+    for (const [listId, meta] of entries) {
+        const li = document.createElement("li");
+        const link = document.createElement("a");
+        link.href = "#";
+        link.className = "list-twitter-list";
+        const inner = document.createElement("div");
+        inner.className = "inner";
+        const name = document.createElement("div");
+        name.className = "txt-ellipsis";
+        const strong = document.createElement("strong");
+        strong.textContent = meta.name;
+        name.appendChild(strong);
+        inner.appendChild(name);
+        const desc = document.createElement("p");
+        desc.className = "txt-ellipsis";
+        const built = buildAlgoList(listId);
+        desc.textContent = built ? built.description : "";
+        link.append(inner, desc);
+        link.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+                addAlgoColumn(listId);
+            } catch (err) {
+                console.error("[OTD] algorithmic column failed:", err);
+            }
+        });
+        li.dataset.search = meta.name.toLowerCase();
+        li.appendChild(link);
+        list.appendChild(li);
+    }
+
+    search.addEventListener("input", () => {
+        const q = search.value.trim().toLowerCase();
+        // Inline display, because bundle.css rules on list items beat [hidden].
+        for (const li of list.children) {
+            li.style.display = q === "" || li.dataset.search.includes(q) ? "" : "none";
+        }
+    });
+    back.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        picker.remove();
+        grid.style.display = "";
+        if (title) title.textContent = previousTitle;
+    });
+
+    picker.append(back, search, list);
+    grid.style.display = "none";
+    content.appendChild(picker);
+    if (title) title.textContent = "For you & Topics";
+    search.focus();
+}
+
 // bundle.js builds the column-type grid from DISPLAY_ORDER and only wires click
 // handlers to the launchers that exist when the modal opens, so an extra tile is
 // fine as long as it carries its own handler.
@@ -1020,15 +1217,15 @@ function addForYouTile(grid) {
     li.innerHTML =
         '<a href="#" class="btn">' +
         '<i class="block column-type-icon icon color-twitter-blue icon-magic-search"></i>' +
-        '<span class="txt-size--14 with-linebreaks txt-weight--500">For you</span>' +
+        '<span class="txt-size--14 with-linebreaks txt-weight--500">For you &amp; Topics</span>' +
         "</a>";
     li.querySelector("a").addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
         try {
-            addAlgoColumn(FORYOU_LIST_ID);
+            showAlgoPicker(grid);
         } catch (err) {
-            console.error("[OTD] For you column failed:", err);
+            console.error("[OTD] algorithmic picker failed:", err);
         }
     });
     const anchor = grid.querySelector("li.js-item-launch:not(.top-row)");
