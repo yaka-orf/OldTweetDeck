@@ -1084,7 +1084,10 @@ function injectForYouList(xhr, wrapperKey) {
     try {
         let lists = wrapperKey ? data?.[wrapperKey] : data;
         if (!Array.isArray(lists)) lists = [];
-        const missing = [FORYOU_LIST_ID].filter(
+        // Every synthetic id has to be advertised, not just For you: the deck looks
+        // its columns up in this response on startup and drops the ones it cannot
+        // find, which is how topic columns were disappearing on reload.
+        const missing = [...algoLists.keys()].filter(
             (id) => !lists.some((l) => String(l.id_str || l.id) === id)
         );
         if (missing.length) lists = [...missing.map(buildAlgoList), ...lists];
@@ -1338,18 +1341,67 @@ const ALGO_REFRESH_ICON =
     '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">' +
     '<path d="M12 5V1L7 6l5 5V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>';
 
+// Column headings carry the emoji we put in the name, plus the attribution, so
+// compare on the bare text.
+function algoNormalizeName(text) {
+    return String(text || "")
+        .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+}
+
+function algoHeadingOf(columnEl) {
+    const heading = columnEl ? columnEl.querySelector(".column-heading") : null;
+    return heading ? heading.textContent : "";
+}
+
+function algoListIdByName(heading) {
+    const wanted = algoNormalizeName(heading);
+    if (!wanted) return null;
+    for (const [listId, meta] of algoLists) {
+        if (algoNormalizeName(meta.name) === wanted) return String(listId);
+    }
+    return null;
+}
+
+// A column saved by an older build can point at a reserved id that this build no
+// longer has mapped (the ids used to be handed out by arrival order). The heading
+// still names the topic, so rebind that id to the topic instead of showing a blank
+// column that asks X for a list that does not exist.
+function algoRepairColumn(listId, heading) {
+    if (!listId || !/^90000000000/.test(String(listId))) return false;
+    if (algoLists.has(String(listId))) return true;
+    const wanted = algoNormalizeName(heading);
+    if (!wanted) return false;
+    const topic = ALGO_TOPIC_CATALOG.find((t) => algoNormalizeName(t.name) === wanted);
+    if (!topic) return false;
+    algoLists.set(String(listId), { tag: String(topic.tag), name: topic.name });
+    console.info("[OTD] rebound reserved column", listId, "to", topic.name);
+    return true;
+}
+
 function algoColumnEntries() {
     const manager = TD.controller.columnManager;
     const entries = [];
     for (const key of manager._columnOrder || []) {
         const column = (manager._aColumnIndex || {})[key];
+        const columnEl = document.querySelector(`.js-column[data-column="${key}"]`);
+        const heading = algoHeadingOf(columnEl);
         for (const feed of (column && column._feeds) || []) {
             const metadata = feed && feed.state && feed.state.metadata;
-            const listId = metadata ? String(metadata.listId || "") : "";
-            if (!algoLists.has(listId)) continue;
+            let listId = metadata ? String(metadata.listId || "") : "";
+            // Topic columns come back from the deck with no metadata at all, so the
+            // heading is the only thing that identifies them.
+            if (!listId || !algoLists.has(listId)) {
+                if (algoRepairColumn(listId, heading) || !listId) {
+                    listId = algoListIdByName(heading) || listId;
+                }
+            }
+            if (!listId || !algoLists.has(String(listId))) continue;
             entries.push({
                 columnKey: key,
-                listId: listId,
+                listId: String(listId),
                 feedKey: (feed.privateState && feed.privateState.key) || null,
             });
         }
@@ -1358,6 +1410,7 @@ function algoColumnEntries() {
 }
 
 function refreshAlgoColumn(entry) {
+    if (!entry) return false;
     // Anything cached for this column and account has to go; otherwise the poller
     // asks for a cursor in the middle of the timeline instead of the top.
     const accountId = String(entry.feedKey || "").split(":")[1];
@@ -1365,14 +1418,28 @@ function refreshAlgoColumn(entry) {
     for (const key of Object.keys(cursors)) {
         if (key.startsWith(prefix)) delete cursors[key];
     }
-    algoForceTop[entry.listId] = Date.now();
+    algoForceTop[entry.listId] = true;
+
+    // The feed poller's refresh() is a no-op for these columns (measured: no request
+    // at all), while reset + loadFeeds does refetch. Prefer that, and fall back to
+    // the poller when the column model is not reachable.
+    const column = (TD.controller.columnManager._aColumnIndex || {})[entry.columnKey];
+    if (column && typeof column.loadFeeds === "function") {
+        try {
+            if (typeof column.reset === "function") column.reset();
+            column.loadFeeds();
+            return true;
+        } catch (e) {
+            console.warn("[OTD] For you refresh: column reload failed", e);
+        }
+    }
     const poller = entry.feedKey ? TD.controller.feedManager.getPoller(entry.feedKey) : null;
     if (poller && typeof poller.refresh === "function") {
         poller.refresh({ reset: true });
         return true;
     }
     delete algoForceTop[entry.listId];
-    console.warn("[OTD] For you refresh: no poller for", entry.feedKey);
+    console.warn("[OTD] For you refresh: nothing to refresh for", entry.feedKey);
     return false;
 }
 
@@ -1402,7 +1469,10 @@ function installAlgoRefreshButtons() {
                     if (icon) icon.style.transform = "";
                 }
             }, 100);
-            refreshAlgoColumn(entry);
+            // Look the column up again: the entry captured when the button was added
+            // can predate the feed (and its poller) existing.
+            const fresh = algoColumnEntries().find((item) => item.columnKey === entry.columnKey);
+            refreshAlgoColumn(fresh || entry);
         });
         links.insertBefore(button, links.firstChild);
     }
@@ -1884,8 +1954,9 @@ const proxyRoutes = [
                     if (feed.tag) variables.tag = feed.tag;
                     // A refresh click must land on the top of the ranked feed, not
                     // wherever the previous page left off.
-                    const forcedAt = algoForceTop[String(list_id)] || 0;
-                    const forceTop = Date.now() - forcedAt < 15000;
+                    // Stays set until a request actually uses it: the deck does not
+                    // always poll the moment we ask, and a time window expired first.
+                    const forceTop = Boolean(algoForceTop[String(list_id)]);
                     if (forceTop) delete algoForceTop[String(list_id)];
                     if (max_id && !forceTop) {
                         const bn = BigInt(max_id) + BigInt(1);
