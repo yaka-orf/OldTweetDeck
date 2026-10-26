@@ -929,21 +929,24 @@ try {
     topicListIds = {};
 }
 
-function listIdForTopic(tag) {
-    if (topicListIds[tag]) return topicListIds[tag];
-    const id = String(TOPIC_LIST_ID_BASE + BigInt(Object.keys(topicListIds).length));
-    topicListIds[tag] = id;
-    localStorage.OTDalgoTopics = JSON.stringify(topicListIds);
+function listIdForTopic(tag, index) {
+    // Derive the id from the catalog position so it cannot shift when a topic is
+    // added later or the stored map is rebuilt in a different order.
+    const id = String(TOPIC_LIST_ID_BASE + BigInt(index >= 0 ? index : Object.keys(topicListIds).length));
+    if (topicListIds[tag] !== id) {
+        topicListIds[tag] = id;
+        localStorage.OTDalgoTopics = JSON.stringify(topicListIds);
+    }
     return id;
 }
 
 function registerAlgoTopics(topics) {
-    for (const topic of topics) {
-        const listId = listIdForTopic(String(topic.tag));
+    topics.forEach((topic, index) => {
+        const listId = listIdForTopic(String(topic.tag), index);
         const existing = algoLists.get(listId);
         algoLists.set(listId, { tag: String(topic.tag), name: topic.name });
         if (existing && existing.name !== topic.name) existing.name = topic.name;
-    }
+    });
 }
 
 // Captured from X's PinnedTimelinesManagementSheetQuery; the ids are global entities,
@@ -1937,7 +1940,20 @@ const proxyRoutes = [
                 let since_id = params.get("since_id");
 
                 // The reserved ids are not lists at all: they are the ranked home feed.
-                const feed = algoLists.get(String(list_id));
+                let feed = algoLists.get(String(list_id));
+                if (!feed && /^90000000000/.test(String(list_id))) {
+                    // A column saved by an older build can carry an id this build has
+                    // not registered; recover the tag from the persisted map.
+                    const tag = Object.keys(topicListIds).find(
+                        (t) => String(topicListIds[t]) === String(list_id)
+                    );
+                    if (tag) {
+                        const topic = ALGO_TOPIC_CATALOG.find((t) => String(t.tag) === tag);
+                        feed = { tag: tag, name: topic ? topic.name : "Topic" };
+                        algoLists.set(String(list_id), feed);
+                        console.info("[OTD] adopted reserved id", list_id, "as", feed.name);
+                    }
+                }
                 if (feed) {
                     const user_id = xhr.modReqHeaders["x-act-as-user-id"] ?? getCurrentUserId();
                     xhr.storage.user_id = user_id;
