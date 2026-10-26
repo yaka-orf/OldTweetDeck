@@ -195,17 +195,48 @@ window.addEventListener('message', e => {
             }
         }
 
-        let homepageData = await fetch(`https://${location.hostname}/`).then(res => res.text());
-        let dom = new DOMParser().parseFromString(homepageData, 'text/html');
-        let anims = Array.from(dom.querySelectorAll('svg[id^="loading-x"]')).map(svg => svg.outerHTML);
-
-        let vendorCode = homepageData.match(/vendor.(\w+).js"/)[1];
-        let challengePos = homepageData.match(/(\d+):"ondemand.s"/)[1];
-        let challengeCode = homepageData.match(new RegExp(`${challengePos}:"(\\w+)"`))[1];
-        let challengeData = await fetch(`https://abs.twimg.com/responsive-web/client-web/ondemand.s.${challengeCode}a.js`).then(res => res.text());
-        console.log(`Successfully fetched challenge data (${challengeCode} / ${challengeData.length})`);
-        let vendorData = await fetch(`https://abs.twimg.com/responsive-web/client-web/vendor.${vendorCode}.js`).then(res => res.text());
-        console.log(`Successfully fetched vendor data (${vendorCode} / ${vendorData.length})`);
+        // Resolving the current bundle names needs a homepage fetch, which on a cold
+        // start takes 30-60s because it competes with the deck's own bundles, and every
+        // API call waits behind it. Remember the names together with the bundles so a
+        // start within the TTL needs no network at all.
+        const CACHE_KEY = 'OTDchallengeCache';
+        const CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+        let cached = null;
+        try {
+            cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+        } catch(e) {
+            cached = null;
+        }
+        let challengeData, vendorData, anims, verificationCode;
+        const cacheFresh = !!(cached && cached.savedAt && (Date.now() - cached.savedAt) < CACHE_TTL_MS &&
+            cached.challengeData && cached.vendorData && cached.verificationCode);
+        if(cacheFresh) {
+            challengeData = cached.challengeData;
+            vendorData = cached.vendorData;
+            anims = cached.anims || [];
+            verificationCode = cached.verificationCode;
+            console.log(`Using the cached challenge data (${cached.challengeCode} / ${cached.vendorCode})`);
+        } else {
+            const homepageData = await fetch(`https://${location.hostname}/`).then(res => res.text());
+            const dom = new DOMParser().parseFromString(homepageData, 'text/html');
+            anims = Array.from(dom.querySelectorAll('svg[id^="loading-x"]')).map(svg => svg.outerHTML);
+            const vendorCode = homepageData.match(/vendor.(\w+).js"/)[1];
+            const challengePos = homepageData.match(/(\d+):"ondemand.s"/)[1];
+            const challengeCode = homepageData.match(new RegExp(`${challengePos}:"(\\w+)"`))[1];
+            const meta = dom.querySelector('meta[name="twitter-site-verification"]');
+            verificationCode = meta ? meta.content : '';
+            challengeData = await fetch(`https://abs.twimg.com/responsive-web/client-web/ondemand.s.${challengeCode}a.js`).then(res => res.text());
+            console.log(`Successfully fetched challenge data (${challengeCode} / ${challengeData.length})`);
+            vendorData = await fetch(`https://abs.twimg.com/responsive-web/client-web/vendor.${vendorCode}.js`).then(res => res.text());
+            console.log(`Successfully fetched vendor data (${vendorCode} / ${vendorData.length})`);
+            try {
+                localStorage.setItem(CACHE_KEY, JSON.stringify({
+                    savedAt: Date.now(), challengeCode, vendorCode, challengeData, vendorData, anims, verificationCode
+                }));
+            } catch(e) {
+                console.warn('Could not cache the challenge data:', e);
+            }
+        }
 
         function sendInit() {
             console.log('Sending init');
@@ -214,7 +245,7 @@ window.addEventListener('message', e => {
                 challenge: challengeData,
                 vendor: vendorData,
                 anims,
-                verificationCode: dom.querySelector('meta[name="twitter-site-verification"]').content,
+                verificationCode,
             }, '*');
         }
         otdSendInit = sendInit;
