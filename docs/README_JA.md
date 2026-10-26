@@ -13,13 +13,26 @@
 [English README](/README.md)  
 [한국어 README](/docs/README_KO.md)
 
+## このフォークについて
+
+本家 [dimdenGD/OldTweetDeck](https://github.com/dimdenGD/OldTweetDeck) の個人フォークです。変更は本家へ送っていません。
+
+本家に残っていた issue を修正し、次の機能を足しています。
+
+- **For you 列** — X のおすすめ（ranked ホームタイムライン）を列として表示
+- **トピック別タイムライン** — 72種から選んで列にできます（検索付きのピッカー）
+- **アカウント選択** — 列を追加するとき、どのログイン済みアカウントのフィードを使うか選べます
+- **更新ボタン** — For you／トピック列のヘッダに追加。カーソルを捨てて先頭から取り直します
+
+修正した issue は #537 / #547 / #563 / #545 / #531 / #530 / #549 / #548 / #552 です。計測内容と未検証の項目は [FORK_NOTES.md](FORK_NOTES.md) にまとめています。
+
 ## インストール方法
 
 注意: 拡張機能ファイル(Chromiumの場合はZipファイルを展開したもの、Firefoxの場合はZipファイル)をインストール後に削除しないでください。
 
 ### Chromium (Chrome, Edge, Opera, Brave など) 
 
-1. [リリースページ](https://github.com/dimdenGD/OldTweetDeck/releases) から `OldTweetDeckChrome.zip` をダウンロードする
+1. [リリースページ](https://github.com/yaka-orf/OldTweetDeck/releases) から `OldTweetDeckChrome.zip` をダウンロードする
 2. Zipファイルを展開する
 3. 拡張機能ページを開く (`chrome://extensions`)
 4. デベロッパーモードを有効にする (拡張機能ページの右上に切り替えスイッチがあります)
@@ -31,7 +44,7 @@
 
 #### Nightly / Developer Edition
 
-1. [リリースページ](https://github.com/dimdenGD/OldTweetDeck/releases) から `OldTweetDeckFirefox.zip` をダウンロードする
+1. [リリースページ](https://github.com/yaka-orf/OldTweetDeck/releases) から `OldTweetDeckFirefox.zip` をダウンロードする
 2. 高度な設定ページを開く (`about:config`)
 3. `xpinstall.signatures.required` の設定を false に変更する
 4. アドオンページを開く (`about:addons`)
