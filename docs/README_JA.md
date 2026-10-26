@@ -10,8 +10,7 @@
 ![スクリーンショット](https://lune.dimden.dev/9713d947d56.png)
 
 ### 他の言語での説明
-[English README](/README.md)  
-[한국어 README](/docs/README_KO.md)
+[English README](/README.md)
 
 ## このフォークについて
 
