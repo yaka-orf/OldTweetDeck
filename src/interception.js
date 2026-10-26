@@ -1097,13 +1097,16 @@ function injectForYouList(xhr, wrapperKey) {
 }
 
 // A For you column is an ordinary list column whose metadata points at the reserved id.
-function addAlgoColumn(listId) {
+function addAlgoColumn(listId, accountKey) {
     const cm = window.TD && TD.controller && TD.controller.columnManager;
     if (!cm || typeof cm.makeColumnFor !== "function") {
         console.warn("[OTD] For you column: no column manager");
         return;
     }
-    let client = TD.controller.clients.getClientsByService("twitter")[0];
+    const clients = TD.controller.clients.getClientsByService("twitter") || [];
+    const client = accountKey
+        ? clients.find((c) => c.oauth.account.getKey() === accountKey)
+        : clients[0];
     if (!client) {
         console.warn("[OTD] For you column: no twitter client yet");
         return;
@@ -1122,15 +1125,45 @@ function addAlgoColumn(listId) {
     if (TD.components.OpenColumn.instance) TD.components.OpenColumn.instance.destroy();
 }
 
-// Swaps the column-type grid for a searchable list of For you plus every topic.
-function showAlgoPicker(grid) {
-    const content = grid.parentElement;
-    if (!content || content.querySelector(".otd-algo-picker")) return;
-    const title = content.closest(".js-modal-panel")?.querySelector(".js-header-title");
-    const previousTitle = title ? title.textContent : "";
+// The accounts the deck is signed in to. The name cache holds "@screen_name" per
+// user id, which is what the deck's own account pickers show.
+function algoAccounts() {
+    const clients = TD.controller.clients.getClientsByService("twitter") || [];
+    return clients.map((client) => {
+        const key = client.oauth.account.getKey();
+        const userId = String(key).split(":")[1];
+        let screenName = null;
+        let avatar = null;
+        try {
+            screenName = TD.cache.names.getScreenName(userId);
+        } catch (e) {}
+        try {
+            const user =
+                TD.cache.twitterUsers && TD.cache.twitterUsers.get
+                    ? TD.cache.twitterUsers.get(userId)
+                    : null;
+            if (user) avatar = user.profile_image_url_https || user.profile_image_url || null;
+        } catch (e) {}
+        return {
+            key: key,
+            userId: userId,
+            screenName: screenName || userId,
+            avatar:
+                avatar ||
+                "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png",
+        };
+    });
+}
 
-    const picker = document.createElement("div");
-    picker.className = "otd-algo-picker padding-v--10";
+function algoModalTitle(picker) {
+    const panel = picker.parentElement?.closest(".js-modal-panel");
+    return panel ? panel.querySelector(".js-header-title") : null;
+}
+
+// Step 1: which feed (For you, or one of the topics).
+function renderAlgoFeeds(picker, grid) {
+    const title = algoModalTitle(picker);
+    picker.innerHTML = "";
 
     const back = document.createElement("a");
     back.href = "#";
@@ -1174,9 +1207,9 @@ function showAlgoPicker(grid) {
             e.preventDefault();
             e.stopPropagation();
             try {
-                addAlgoColumn(listId);
+                showAlgoAccounts(picker, grid, listId);
             } catch (err) {
-                console.error("[OTD] algorithmic column failed:", err);
+                console.error("[OTD] algorithmic accounts failed:", err);
             }
         });
         li.dataset.search = meta.name.toLowerCase();
@@ -1194,16 +1227,84 @@ function showAlgoPicker(grid) {
     back.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        const previousTitle = picker.dataset.otdTitle || "";
         picker.remove();
         grid.style.display = "";
         if (title) title.textContent = previousTitle;
     });
 
     picker.append(back, search, list);
+    if (title) title.textContent = "For you & Topics";
+}
+
+// Step 2: whose timeline, the same choice the Home column modal offers.
+function showAlgoAccounts(picker, grid, listId) {
+    const feed = algoLists.get(listId);
+    if (!feed) return;
+    const title = algoModalTitle(picker);
+    picker.innerHTML = "";
+
+    const back = document.createElement("a");
+    back.href = "#";
+    back.className = "block margin-h--8 margin-b--8 txt-size--13";
+    back.textContent = "\u2190 For you & Topics";
+
+    const caption = document.createElement("div");
+    caption.className = "margin-h--8 margin-b--8 txt-size--13 txt-muted";
+    caption.textContent = "Add " + feed.name + " for:";
+
+    const list = document.createElement("ul");
+    list.className = "lst-group";
+
+    for (const account of algoAccounts()) {
+        const li = document.createElement("li");
+        const link = document.createElement("a");
+        link.href = "#";
+        link.className = "js-account-item compose-account is-actionable";
+        const avatar = document.createElement("img");
+        avatar.src = account.avatar;
+        avatar.className = "avatar size48";
+        avatar.alt = "";
+        const name = document.createElement("div");
+        name.className = "txt-ellipsis margin-l--8 txt-weight--500";
+        name.textContent = account.screenName;
+        link.append(avatar, name);
+        link.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            try {
+                addAlgoColumn(listId, account.key);
+            } catch (err) {
+                console.error("[OTD] algorithmic column failed:", err);
+            }
+        });
+        li.appendChild(link);
+        list.appendChild(li);
+    }
+
+    back.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        renderAlgoFeeds(picker, grid);
+    });
+
+    picker.append(back, caption, list);
+    if (title) title.textContent = "Add " + feed.name;
+}
+
+// Entry point: the tile in the column-type grid swaps the grid for the picker.
+function showAlgoPicker(grid) {
+    const content = grid.parentElement;
+    if (!content || content.querySelector(".otd-algo-picker")) return;
+    const title = algoModalTitle({ parentElement: content });
+    const picker = document.createElement("div");
+    picker.className = "otd-algo-picker padding-v--10";
+    picker.dataset.otdTitle = title ? title.textContent : "";
     grid.style.display = "none";
     content.appendChild(picker);
-    if (title) title.textContent = "For you & Topics";
-    search.focus();
+    renderAlgoFeeds(picker, grid);
+    const search = picker.querySelector('input[type="search"]');
+    if (search) search.focus();
 }
 
 // bundle.js builds the column-type grid from DISPLAY_ORDER and only wires click
