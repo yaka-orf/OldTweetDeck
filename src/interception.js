@@ -1129,30 +1129,33 @@ function addAlgoColumn(listId, accountKey) {
 // user id, which is what the deck's own account pickers show.
 function algoAccounts() {
     const clients = TD.controller.clients.getClientsByService("twitter") || [];
-    return clients.map((client) => {
+    const seen = new Set();
+    const accounts = [];
+    for (const client of clients) {
         const key = client.oauth.account.getKey();
         const userId = String(key).split(":")[1];
+        // The deck hands out one client per signed-in account, but the same account
+        // can appear more than once, so key the list by user id.
+        if (seen.has(userId)) continue;
+        seen.add(userId);
         let screenName = null;
         let avatar = null;
         try {
             screenName = TD.cache.names.getScreenName(userId);
         } catch (e) {}
         try {
-            const user =
-                TD.cache.twitterUsers && TD.cache.twitterUsers.get
-                    ? TD.cache.twitterUsers.get(userId)
-                    : null;
+            const cache = TD.cache.twitterUsers;
+            const user = cache && cache.getById ? cache.getById(userId) : null;
             if (user) avatar = user.profile_image_url_https || user.profile_image_url || null;
         } catch (e) {}
-        return {
+        accounts.push({
             key: key,
             userId: userId,
-            screenName: screenName || userId,
-            avatar:
-                avatar ||
-                "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png",
-        };
-    });
+            screenName: screenName || "id " + userId,
+            avatar: avatar,
+        });
+    }
+    return accounts;
 }
 
 function algoModalTitle(picker) {
@@ -1260,15 +1263,32 @@ function showAlgoAccounts(picker, grid, listId) {
         const li = document.createElement("li");
         const link = document.createElement("a");
         link.href = "#";
-        link.className = "js-account-item compose-account is-actionable";
-        const avatar = document.createElement("img");
-        avatar.src = account.avatar;
-        avatar.className = "avatar size48";
-        avatar.alt = "";
-        const name = document.createElement("div");
-        name.className = "txt-ellipsis margin-l--8 txt-weight--500";
+        // Styled inline: bundle.css zeroes out text inside its own account-list
+        // classes, which left the names invisible.
+        link.style.cssText =
+            "display:flex;align-items:center;gap:10px;padding:8px 12px;text-decoration:none;color:inherit;cursor:pointer;border-radius:4px;";
+
+        if (account.avatar) {
+            const avatar = document.createElement("img");
+            avatar.src = account.avatar;
+            avatar.alt = "";
+            avatar.style.cssText = "width:32px;height:32px;border-radius:50%;flex:0 0 32px;";
+            link.appendChild(avatar);
+        } else {
+            const badge = document.createElement("div");
+            const initial = account.screenName.replace(/^@/, "").slice(0, 1).toUpperCase() || "?";
+            badge.textContent = initial;
+            badge.style.cssText =
+                "width:32px;height:32px;border-radius:50%;flex:0 0 32px;display:flex;align-items:center;" +
+                "justify-content:center;font-size:15px;font-weight:500;background:#3a4a5c;color:#fff;";
+            link.appendChild(badge);
+        }
+
+        const name = document.createElement("span");
         name.textContent = account.screenName;
-        link.append(avatar, name);
+        name.style.cssText = "font-size:14px;line-height:1.3;";
+        link.appendChild(name);
+
         link.addEventListener("click", (e) => {
             e.preventDefault();
             e.stopPropagation();
