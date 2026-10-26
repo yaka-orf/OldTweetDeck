@@ -129,9 +129,11 @@ function solveChallengeOnce(path, method, timeoutMs) {
     });
 }
 
-const OTD_SOLVER_READY_WAIT_MS = 20000;
+// The bundled solver holds a solve request until its own init finishes (up to 20s
+// inside solver.html), so an attempt must not give up before that.
+const OTD_SOLVER_READY_WAIT_MS = 25000;
 const OTD_SOLVE_ATTEMPTS = 3;
-const OTD_SOLVE_ATTEMPT_MS = 6000;
+const OTD_SOLVE_ATTEMPT_MS = 8000;
 
 async function solveChallenge(path, method) {
     if(!ready && !solverErrored) await waitForSolver(OTD_SOLVER_READY_WAIT_MS);
