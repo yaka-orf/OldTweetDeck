@@ -908,6 +908,10 @@ function parseMemberUser(result) {
 //   lists/statuses.json?list_id=<reserved>               -> HomeTimeline
 //   lists/show.json?list_id=<reserved>                   -> answered locally
 const FORYOU_LIST_ID = "900000000000001";
+
+// The refresh button asks for one cursor-less page. The deck's poller would
+// otherwise send a since_id and only pull newer tweets onto the existing list.
+const algoForceTop = {};
 // Operation id of the ranked timeline, captured from x.com/home (2026-10-26). X
 // rotates these, so it needs the same upkeep as the other ids in this file.
 const HOME_TIMELINE_OP = "0toR0MxC06yY3Fc57GXBpA";
@@ -1326,6 +1330,86 @@ function showAlgoPicker(grid) {
     const search = picker.querySelector('input[type="search"]');
     if (search) search.focus();
 }
+
+// A refresh control for the synthetic For you and topic columns. The deck gives
+// list columns no way to ask for a fresh top, and a ranked feed drifts, so drop
+// what we cached for that column and let its poller refetch from the top.
+const ALGO_REFRESH_ICON =
+    '<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true">' +
+    '<path d="M12 5V1L7 6l5 5V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>';
+
+function algoColumnEntries() {
+    const manager = TD.controller.columnManager;
+    const entries = [];
+    for (const key of manager._columnOrder || []) {
+        const column = (manager._aColumnIndex || {})[key];
+        for (const feed of (column && column._feeds) || []) {
+            const metadata = feed && feed.state && feed.state.metadata;
+            const listId = metadata ? String(metadata.listId || "") : "";
+            if (!algoLists.has(listId)) continue;
+            entries.push({
+                columnKey: key,
+                listId: listId,
+                feedKey: (feed.privateState && feed.privateState.key) || null,
+            });
+        }
+    }
+    return entries;
+}
+
+function refreshAlgoColumn(entry) {
+    // Anything cached for this column and account has to go; otherwise the poller
+    // asks for a cursor in the middle of the timeline instead of the top.
+    const accountId = String(entry.feedKey || "").split(":")[1];
+    const prefix = `algo-${entry.listId}-${accountId}`;
+    for (const key of Object.keys(cursors)) {
+        if (key.startsWith(prefix)) delete cursors[key];
+    }
+    algoForceTop[entry.listId] = Date.now();
+    const poller = entry.feedKey ? TD.controller.feedManager.getPoller(entry.feedKey) : null;
+    if (poller && typeof poller.refresh === "function") {
+        poller.refresh({ reset: true });
+        return true;
+    }
+    delete algoForceTop[entry.listId];
+    console.warn("[OTD] For you refresh: no poller for", entry.feedKey);
+    return false;
+}
+
+function installAlgoRefreshButtons() {
+    for (const entry of algoColumnEntries()) {
+        const column = document.querySelector(`.js-column[data-column="${entry.columnKey}"]`);
+        const links = column ? column.querySelector(".column-header-links") : null;
+        if (!links || links.querySelector(".otd-algo-refresh")) continue;
+
+        const button = document.createElement("a");
+        button.href = "#";
+        button.className = "column-header-link otd-algo-refresh";
+        button.title = "Refresh";
+        button.style.cssText =
+            "display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;";
+        button.innerHTML = ALGO_REFRESH_ICON;
+        button.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const icon = button.firstElementChild;
+            let turns = 0;
+            const spin = setInterval(() => {
+                turns += 1;
+                if (icon) icon.style.transform = `rotate(${turns * 120}deg)`;
+                if (turns >= 6) {
+                    clearInterval(spin);
+                    if (icon) icon.style.transform = "";
+                }
+            }, 100);
+            refreshAlgoColumn(entry);
+        });
+        links.insertBefore(button, links.firstChild);
+    }
+}
+
+// The header is rebuilt on some redraws, so keep the button idempotently in place.
+setInterval(installAlgoRefreshButtons, 2000);
 
 // bundle.js builds the column-type grid from DISPLAY_ORDER and only wires click
 // handlers to the launchers that exist when the modal opens, so an extra tile is
@@ -1798,11 +1882,16 @@ const proxyRoutes = [
                         withCommunity: true,
                     };
                     if (feed.tag) variables.tag = feed.tag;
-                    if (max_id) {
+                    // A refresh click must land on the top of the ranked feed, not
+                    // wherever the previous page left off.
+                    const forcedAt = algoForceTop[String(list_id)] || 0;
+                    const forceTop = Date.now() - forcedAt < 15000;
+                    if (forceTop) delete algoForceTop[String(list_id)];
+                    if (max_id && !forceTop) {
                         const bn = BigInt(max_id) + BigInt(1);
                         if (cursors[`${ns}-${bn}`]) variables.cursor = cursors[`${ns}-${bn}`];
                     }
-                    if (since_id) {
+                    if (since_id && !forceTop) {
                         const bn = BigInt(since_id);
                         if (cursors[`${ns}-${bn}-top`]) {
                             variables.cursor = cursors[`${ns}-${bn}-top`];
