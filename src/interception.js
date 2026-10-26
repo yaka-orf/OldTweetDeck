@@ -900,6 +900,247 @@ function parseMemberUser(result) {
     }
     return user;
 }
+// --- Synthetic "For you" list (#558) -------------------------------------------
+// The ranked home timeline cannot be a column type of its own without hand-patching
+// the minified column enums in bundle.js, so it rides the list column plumbing as a
+// virtual list with a reserved id:
+//   lists/ownerships.json, subscriptions.json, list.json -> the For you entry
+//   lists/statuses.json?list_id=<reserved>               -> HomeTimeline
+//   lists/show.json?list_id=<reserved>                   -> answered locally
+const FORYOU_LIST_ID = "900000000000001";
+// Operation id of the ranked timeline, captured from x.com/home (2026-10-26). X
+// rotates these, so it needs the same upkeep as the other ids in this file.
+const HOME_TIMELINE_OP = "0toR0MxC06yY3Fc57GXBpA";
+const HOME_TIMELINE_FEATURES = {"rweb_video_screen_enabled":false,"rweb_cashtags_enabled":true,"profile_label_improvements_pcf_label_in_post_enabled":true,"responsive_web_profile_redirect_enabled":true,"rweb_tipjar_consumption_enabled":false,"verified_phone_label_enabled":false,"creator_subscriptions_tweet_preview_api_enabled":true,"responsive_web_graphql_timeline_navigation_enabled":true,"premium_content_api_read_enabled":false,"communities_web_enable_tweet_community_results_fetch":true,"c9s_tweet_anatomy_moderator_badge_enabled":true,"responsive_web_grok_analyze_button_fetch_trends_enabled":false,"responsive_web_grok_analyze_post_followups_enabled":true,"rweb_cashtags_composer_attachment_enabled":true,"responsive_web_jetfuel_frame":true,"rweb_sports_post_context_enabled":true,"responsive_web_grok_share_attachment_enabled":true,"responsive_web_grok_annotations_enabled":true,"articles_preview_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"rweb_conversational_replies_downvote_enabled":false,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"content_disclosure_indicator_enabled":true,"content_disclosure_ai_generated_indicator_enabled":true,"responsive_web_grok_show_grok_translated_post":true,"responsive_web_grok_analysis_button_from_backend":true,"post_ctas_fetch_enabled":false,"freedom_of_speech_not_reach_fetch_enabled":true,"standardized_nudges_misinfo":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_inline_media_enabled":false,"responsive_web_nested_quote_preview_enabled":true,"responsive_web_grok_image_annotation_enabled":true,"responsive_web_grok_imagine_annotation_enabled":true,"responsive_web_made_on_x_label_enabled":false,"responsive_web_grok_community_note_auto_translation_is_enabled":true,"responsive_web_enhance_cards_enabled":false};
+const algoLists = new Map([[FORYOU_LIST_ID, { tag: null, name: "\u{1F52E} For you" }]]);
+
+// A fake owner, deliberately not the real account's id, so the cached profile of the
+// logged-in user is never overwritten by this synthetic list's metadata.
+const FORYOU_FAKE_USER = {
+    id: 1,
+    id_str: "1",
+    screen_name: "oldtweetdeck",
+    name: "OldTweetDeck",
+    profile_image_url_https: "https://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png",
+    profile_image_url: "http://abs.twimg.com/sticky/default_profile_images/default_profile_normal.png",
+    description: "",
+    entities: {},
+    created_at: "Mon Mar 21 00:00:00 +0000 2016",
+    friends_count: 0,
+    listed_count: 0,
+    followers_count: 0,
+    statuses_count: 0,
+    verified: false,
+    protected: false,
+};
+
+function buildAlgoList(listId) {
+    const feed = algoLists.get(listId);
+    if (!feed) return null;
+    const slug = feed.name.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "algo";
+    return {
+        id: Number(listId),
+        id_str: listId,
+        name: feed.name,
+        full_name: `@oldtweetdeck/${slug}`,
+        slug: slug,
+        description: feed.tag
+            ? "X's algorithmic timeline for this topic."
+            : "X's algorithmic timeline - the same feed as the native \"For you\" tab.",
+        subscriber_count: 0,
+        member_count: 0,
+        uri: "/i/lists",
+        mode: "public",
+        following: true,
+        user: FORYOU_FAKE_USER,
+    };
+}
+
+// Puts the synthetic entry in front of the user's real lists, once.
+function injectForYouList(xhr, wrapperKey) {
+    let data;
+    try {
+        data = JSON.parse(xhr.responseText);
+    } catch (e) {
+        data = wrapperKey ? { [wrapperKey]: [] } : [];
+    }
+    try {
+        let lists = wrapperKey ? data?.[wrapperKey] : data;
+        if (!Array.isArray(lists)) lists = [];
+        const missing = [FORYOU_LIST_ID].filter(
+            (id) => !lists.some((l) => String(l.id_str || l.id) === id)
+        );
+        if (missing.length) lists = [...missing.map(buildAlgoList), ...lists];
+        if (wrapperKey) {
+            if (!data || typeof data !== "object") data = {};
+            data[wrapperKey] = lists;
+        } else {
+            data = lists;
+        }
+    } catch (e) {
+        console.error(e);
+    }
+    return data;
+}
+
+// A For you column is an ordinary list column whose metadata points at the reserved id.
+function addAlgoColumn(listId) {
+    const cm = window.TD && TD.controller && TD.controller.columnManager;
+    if (!cm || typeof cm.makeColumnFor !== "function") {
+        console.warn("[OTD] For you column: no column manager");
+        return;
+    }
+    let client = TD.controller.clients.getClientsByService("twitter")[0];
+    if (!client) {
+        console.warn("[OTD] For you column: no twitter client yet");
+        return;
+    }
+    const feed = algoLists.get(listId);
+    if (!feed) return;
+    TD.cache.names.addScreenName(FORYOU_FAKE_USER.id_str, FORYOU_FAKE_USER.screen_name);
+    TD.cache.names.addListName(listId, feed.name);
+    const column = cm.makeColumnFor({
+        type: "list",
+        service: "twitter",
+        accountKey: client.oauth.account.getKey(),
+        metaString: `${FORYOU_FAKE_USER.id_str}/${listId}`,
+    });
+    cm.addColumnToUI(column);
+    if (TD.components.OpenColumn.instance) TD.components.OpenColumn.instance.destroy();
+}
+
+// bundle.js builds the column-type grid from DISPLAY_ORDER and only wires click
+// handlers to the launchers that exist when the modal opens, so an extra tile is
+// fine as long as it carries its own handler.
+function addForYouTile(grid) {
+    if (!grid || grid.querySelector('[data-otd-type="foryou"]')) return;
+    const li = document.createElement("li");
+    li.className = "js-item-launch";
+    li.dataset.otdType = "foryou";
+    li.innerHTML =
+        '<a href="#" class="btn">' +
+        '<i class="block column-type-icon icon color-twitter-blue icon-magic-search"></i>' +
+        '<span class="txt-size--14 with-linebreaks txt-weight--500">For you</span>' +
+        "</a>";
+    li.querySelector("a").addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+            addAlgoColumn(FORYOU_LIST_ID);
+        } catch (err) {
+            console.error("[OTD] For you column failed:", err);
+        }
+    });
+    const anchor = grid.querySelector("li.js-item-launch:not(.top-row)");
+    if (anchor) grid.insertBefore(li, anchor);
+    else grid.appendChild(li);
+}
+
+// OpenColumn.go looks TD.components.OpenColumnHome up at call time, so swapping the
+// constructor here covers every modal opened afterwards.
+function installForYouTile() {
+    const Home = window.TD && TD.components && TD.components.OpenColumnHome;
+    if (!Home) {
+        setTimeout(installForYouTile, 500);
+        return;
+    }
+    if (Home.__otdWrapped) return;
+    const Wrapped = function (...args) {
+        const home = new Home(...args);
+        try {
+            addForYouTile(home.$node && home.$node[0]);
+        } catch (err) {
+            console.error("[OTD] For you tile failed:", err);
+        }
+        return home;
+    };
+    Object.setPrototypeOf(Wrapped, Home);
+    Wrapped.prototype = Home.prototype;
+    Wrapped.__otdWrapped = true;
+    TD.components.OpenColumnHome = Wrapped;
+}
+installForYouTile();
+
+// The ranked feed answers with home_timeline_urt, shaped like the home column's
+// response, so it is parsed here with its own seen/cursor namespace per list.
+function parseAlgoHomeTimeline(xhr, data, ns) {
+    if (data.errors && data.errors[0]) return [];
+    const instructions = data?.data?.home?.home_timeline_urt?.instructions;
+    if (!Array.isArray(instructions)) return [];
+    const addEntries = instructions.find((i) => i.type === "TimelineAddEntries");
+    if (!addEntries) return [];
+    const entries = addEntries.entries || [];
+    let tweets = [];
+    for (const e of entries) {
+        if (e.entryId.startsWith("tweet-")) {
+            const res = e.content?.itemContent?.tweet_results?.result;
+            const tweet = parseTweet(res);
+            if (!tweet) continue;
+            if (
+                tweet.source &&
+                (tweet.source.includes("Twitter for Advertisers") ||
+                    tweet.source.includes("advertiser-interface"))
+            )
+                continue;
+            if (tweet.user.blocking || tweet.user.muting) continue;
+            tweets.push(tweet);
+        } else if (e.entryId.startsWith("home-conversation-")) {
+            const items = e.content?.items || [];
+            const pushTweets = [];
+            for (const item of items) {
+                if (!item.entryId) continue;
+                if (
+                    (item.entryId.startsWith("tweet-") || item.entryId.includes("-tweet-")) &&
+                    !item.entryId.includes("promoted")
+                ) {
+                    const res = item.item?.itemContent?.tweet_results?.result;
+                    const tweet = parseTweet(res);
+                    if (!tweet) continue;
+                    if (
+                        tweet.source &&
+                        (tweet.source.includes("Twitter for Advertisers") ||
+                            tweet.source.includes("advertiser-interface"))
+                    )
+                        continue;
+                    if (tweet.user.blocking || tweet.user.muting) break;
+                    pushTweets.push(tweet);
+                }
+            }
+            if (!seenHomeTweets[ns]) seenHomeTweets[ns] = [];
+            for (const tweet of pushTweets) {
+                if (xhr.storage.since_id && seenHomeTweets[ns].includes(tweet.id_str)) continue;
+                seenHomeTweets[ns].push(tweet.id_str);
+                tweets.push(tweet);
+            }
+        }
+    }
+
+    if (tweets.length === 0) return tweets;
+
+    tweets.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    if (!seenHomeTweets[ns]) seenHomeTweets[ns] = [];
+    for (const tweet of tweets) {
+        if (seenHomeTweets[ns].includes(tweet.id_str)) continue;
+        seenHomeTweets[ns].push(tweet.id_str);
+    }
+
+    const bottomCursor = entries.find(
+        (e) => e.entryId.startsWith("sq-cursor-bottom-") || e.entryId.startsWith("cursor-bottom-")
+    );
+    if (bottomCursor) {
+        cursors[`${ns}-${tweets[tweets.length - 1].id_str}`] = bottomCursor.content.value;
+    }
+    const topCursor = entries.find(
+        (e) => e.entryId.startsWith("sq-cursor-top-") || e.entryId.startsWith("cursor-top-")
+    )?.content?.value;
+    if (topCursor) {
+        if (tweets[0]) cursors[`${ns}-${tweets[0].id_str}-top`] = topCursor;
+        if (tweets[1]) cursors[`${ns}-${tweets[1].id_str}-top`] = topCursor;
+    }
+
+    return tweets;
+}
+
 const proxyRoutes = [
     // Home timeline
     {
@@ -1169,6 +1410,45 @@ const proxyRoutes = [
             }
         },
     },
+    // For you lives in the list pickers as a synthetic entry; the real lists follow it.
+    {
+        path: "/1.1/lists/ownerships.json",
+        method: "GET",
+        afterRequest: (xhr) => injectForYouList(xhr, "lists"),
+    },
+    {
+        path: "/1.1/lists/subscriptions.json",
+        method: "GET",
+        afterRequest: (xhr) => injectForYouList(xhr, "lists"),
+    },
+    {
+        path: "/1.1/lists/list.json",
+        method: "GET",
+        afterRequest: (xhr) => injectForYouList(xhr, null),
+    },
+    // bundle.js resolves a list column's title through lists/show.json when its name
+    // cache misses, so answer the synthetic ids locally and never hit the network.
+    {
+        path: "/1.1/lists/show.json",
+        method: "GET",
+        beforeRequest: (xhr) => {
+            try {
+                const listId = new URL(xhr.modUrl).searchParams.get("list_id");
+                if (algoLists.has(listId)) xhr.storage.algoListId = listId;
+            } catch (e) {
+                console.error(e);
+            }
+        },
+        openHandler: (xhr, method, url, async, username, password) => {
+            if (!xhr.storage.algoListId) xhr.open(method, url, async, username, password);
+        },
+        sendHandler: (xhr, body) => {
+            if (xhr.storage.algoListId) emulateResponse(xhr);
+            else xhr.send(body);
+        },
+        afterRequest: (xhr) =>
+            xhr.storage.algoListId ? buildAlgoList(xhr.storage.algoListId) : xhr.responseText,
+    },
     // List timeline
     {
         path: "/1.1/lists/statuses.json",
@@ -1183,6 +1463,42 @@ const proxyRoutes = [
                 let list_id = params.get("list_id");
                 let max_id = params.get("max_id");
                 let since_id = params.get("since_id");
+
+                // The reserved ids are not lists at all: they are the ranked home feed.
+                const feed = algoLists.get(String(list_id));
+                if (feed) {
+                    const user_id = xhr.modReqHeaders["x-act-as-user-id"] ?? getCurrentUserId();
+                    xhr.storage.user_id = user_id;
+                    xhr.storage.list_id = String(list_id);
+                    xhr.storage.isForYou = true;
+                    const ns = `algo-${list_id}-${user_id}`;
+                    xhr.storage.algoNs = ns;
+                    let variables = {
+                        count: 40,
+                        includePromotedContent: true,
+                        latestControlAvailable: true,
+                        withCommunity: true,
+                    };
+                    if (feed.tag) variables.tag = feed.tag;
+                    if (max_id) {
+                        const bn = BigInt(max_id) + BigInt(1);
+                        if (cursors[`${ns}-${bn}`]) variables.cursor = cursors[`${ns}-${bn}`];
+                    }
+                    if (since_id) {
+                        const bn = BigInt(since_id);
+                        if (cursors[`${ns}-${bn}-top`]) {
+                            variables.cursor = cursors[`${ns}-${bn}-top`];
+                            xhr.storage.cursor = true;
+                            xhr.storage.since_id = since_id;
+                        }
+                    }
+                    xhr.modUrl = `${NEW_API}/${HOME_TIMELINE_OP}/HomeTimeline?${generateParams(
+                        HOME_TIMELINE_FEATURES,
+                        variables
+                    )}`;
+                    return;
+                }
+
                 if (max_id) {
                     let bn = BigInt(params.get("max_id"));
                     bn += BigInt(1);
@@ -1245,6 +1561,11 @@ const proxyRoutes = [
                 console.error(e);
                 return [];
             }
+
+            if (xhr.storage.isForYou) {
+                return parseAlgoHomeTimeline(xhr, data, xhr.storage.algoNs);
+            }
+
             let list = data?.data?.list?.tweets_timeline?.timeline?.instructions?.find(
                 (i) => i.type === "TimelineAddEntries"
             );
