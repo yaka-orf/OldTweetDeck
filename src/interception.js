@@ -1414,8 +1414,8 @@ function algoColumnEntries() {
 
 function refreshAlgoColumn(entry) {
     if (!entry) return false;
-    // Anything cached for this column and account has to go; otherwise the poller
-    // asks for a cursor in the middle of the timeline instead of the top.
+    // Drop anything cached for this column and account, so the fetch asks for the
+    // top of the ranked feed instead of the middle.
     const accountId = String(entry.feedKey || "").split(":")[1];
     const prefix = `algo-${entry.listId}-${accountId}`;
     for (const key of Object.keys(cursors)) {
@@ -1423,9 +1423,21 @@ function refreshAlgoColumn(entry) {
     }
     algoForceTop[entry.listId] = true;
 
-    // The feed poller's refresh() is a no-op for these columns (measured: no request
-    // at all), while reset + loadFeeds does refetch. Prefer that, and fall back to
-    // the poller when the column model is not reachable.
+    // Measured on a live deck: the poller's refresh() returns without doing
+    // anything while it believes a request is still in flight, and these feeds can
+    // leave that counter stuck at 1 when a request never completes. Clearing the
+    // guards is what makes the click actually fetch again.
+    const poller = entry.feedKey ? TD.controller.feedManager.getPoller(entry.feedKey) : null;
+    if (poller && typeof poller.refresh === "function") {
+        try {
+            poller.refreshLock = 0;
+            poller.requestsInFlight = 0;
+            poller.refresh({ reset: true });
+            return true;
+        } catch (e) {
+            console.warn("[OTD] For you refresh: poller refresh failed", e);
+        }
+    }
     const column = (TD.controller.columnManager._aColumnIndex || {})[entry.columnKey];
     if (column && typeof column.loadFeeds === "function") {
         try {
@@ -1435,11 +1447,6 @@ function refreshAlgoColumn(entry) {
         } catch (e) {
             console.warn("[OTD] For you refresh: column reload failed", e);
         }
-    }
-    const poller = entry.feedKey ? TD.controller.feedManager.getPoller(entry.feedKey) : null;
-    if (poller && typeof poller.refresh === "function") {
-        poller.refresh({ reset: true });
-        return true;
     }
     delete algoForceTop[entry.listId];
     console.warn("[OTD] For you refresh: nothing to refresh for", entry.feedKey);
