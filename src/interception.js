@@ -1499,6 +1499,115 @@ function installAlgoRefreshButtons() {
 // The header is rebuilt on some redraws, so keep the button idempotently in place.
 setInterval(installAlgoRefreshButtons, 2000);
 
+// A column whose first page never lands stays empty: the poller reports itself idle
+// (requestsInFlight 0, no refreshLock) and the deck never asks again. Measured on a
+// cold start, where a reload fills the column and a refresh click alone does not.
+// The watcher asks once more, and if the column stays empty it rebuilds the page.
+const ALGO_WATCH_INTERVAL_MS = 3000;
+const ALGO_WATCH_EMPTY_TICKS = 3;
+const ALGO_WATCH_QUIET_MS = 60000;
+const algoWatchState = new Map();
+
+// A reload loop is worse than an empty column: two per ten minutes is the cap.
+function algoWatchCanReload() {
+    let stamps = [];
+    try {
+        stamps = JSON.parse(sessionStorage.OTDalgoWatchReloads || "[]");
+    } catch (e) {
+        stamps = [];
+    }
+    const now = Date.now();
+    stamps = Array.isArray(stamps) ? stamps.filter((t) => now - t < 600000) : [];
+    if (stamps.length >= 2) return false;
+    stamps.push(now);
+    sessionStorage.OTDalgoWatchReloads = JSON.stringify(stamps);
+    return true;
+}
+
+function algoWatchTick() {
+    window.__otdWatchTicks = (window.__otdWatchTicks || 0) + 1;
+    if (document.hidden) return;
+    const now = Date.now();
+    try {
+    for (const entry of algoColumnEntries()) {
+        const columnEl = document.querySelector(`.js-column[data-column="${entry.columnKey}"]`);
+        if (!columnEl) continue;
+        const poller = entry.feedKey ? TD.controller.feedManager.getPoller(entry.feedKey) : null;
+        const busy = Boolean(poller) && ((poller.requestsInFlight || 0) > 0 || Boolean(poller.refreshLock));
+        const empty = columnEl.querySelectorAll(".js-stream-item").length === 0;
+        const state = algoWatchState.get(entry.columnKey) || { ticks: 0, nudged: 0, reloaded: 0 };
+        if (!empty || busy) {
+            state.ticks = 0;
+            algoWatchState.set(entry.columnKey, state);
+            continue;
+        }
+        state.ticks += 1;
+        if (state.ticks === ALGO_WATCH_EMPTY_TICKS && now - state.nudged > ALGO_WATCH_QUIET_MS) {
+            state.nudged = now;
+            console.info("[OTD] empty column, asked again:", entry.feedKey);
+            refreshAlgoColumn(entry);
+        } else if (
+            state.ticks >= ALGO_WATCH_EMPTY_TICKS + 2 &&
+            now - state.reloaded > ALGO_WATCH_QUIET_MS
+        ) {
+            state.reloaded = now;
+            algoWatchState.set(entry.columnKey, state);
+            if (algoWatchCanReload()) {
+                console.info("[OTD] empty column stayed empty, reloading:", entry.feedKey);
+                location.reload();
+                return;
+            }
+            console.warn("[OTD] empty column stayed empty, reload skipped:", entry.feedKey);
+        }
+        algoWatchState.set(entry.columnKey, state);
+    }
+    } catch (e) {
+        window.__otdWatchError = String((e && e.message) || e);
+        console.warn("[OTD] watchdog tick failed", e);
+    }
+}
+
+// The entry lookup misses a For you column whose list metadata has not landed yet,
+// so the rescue also works from the DOM: a For you column that has held nothing for
+// a while is reloaded, which is the one recovery measured to fill it every time.
+const algoEmptySince = new Map();
+
+function algoWatchEmptyColumns() {
+    const now = Date.now();
+    document.querySelectorAll(".js-column").forEach((el) => {
+        const title = ((el.querySelector(".column-header-title") || {}).textContent || "")
+            .replace(/\s*@\S+\s*$/, "")
+            .trim();
+        if (!/^(?:\u{1F52E}\s*)?For you$/i.test(title)) return;
+        if (el.querySelectorAll(".js-stream-item").length > 0) {
+            algoEmptySince.delete(title);
+            return;
+        }
+        const since = algoEmptySince.get(title) || 0;
+        if (!since) {
+            algoEmptySince.set(title, now);
+            return;
+        }
+        if (now - since < 12000) return;
+        algoEmptySince.delete(title);
+        if (!algoWatchCanReload()) {
+            console.warn("[OTD] For you column empty, reload skipped");
+            return;
+        }
+        console.info("[OTD] For you column empty for 12s, reloading");
+        location.reload();
+    });
+}
+
+if (!window.__otd_algo_watch) {
+    window.__otd_algo_watch = true;
+    setInterval(() => {
+        algoWatchTick();
+        algoWatchEmptyColumns();
+    }, ALGO_WATCH_INTERVAL_MS);
+}
+
+
 // bundle.js builds the column-type grid from DISPLAY_ORDER and only wires click
 // handlers to the launchers that exist when the modal opens, so an extra tile is
 // fine as long as it carries its own handler.
