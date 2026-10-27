@@ -156,3 +156,24 @@ at (an hour old is the usual report).
 
 Not verified live. To confirm: hide the deck for ten minutes, come back, and the Home
 column should fill immediately without an F5.
+
+## A For you column starts empty (#547-adjacent)
+
+Measured in the debug profile (`chrome-profile`, CDP 9444, @yorfx): the For you column
+shows no items while its feed is `twitter:<user>:list:82e96338c1`, `requestsInFlight` is
+0 and `refreshLock` is unset, so this is not the stuck-guard case from 8c4e759. Clicking
+the refresh button sends `HomeTimeline` and X answers 200 with 28 tweet entries, yet the
+column stays empty; a reload sometimes fills it with 20 items. A topic column in the same
+reload behaves the same way, and `OTDalwaysUseLocalFiles = '0'` does not change it.
+
+What changed: the For you request now carries `tag: "otd-foryou"`. For you and the Home
+column used to send the same `HomeTimeline` variables, so the two shared one URL shape.
+X ignores a tag it does not know and still returns the full ranked page (checked: 200 with
+28 entries); a reserved list id as the tag returns 0 entries, so only the sentinel is used.
+
+Measured after the change, three reloads with the tag in place: For you held 20 items
+twice and stayed at 0 once. The tag separates the request but does not remove the empty
+state on its own, so the auto-recovery below is still needed.
+
+Still open. To confirm a fix: reload the deck ten times and check that the For you column
+never stays at 0 while the poller is idle.

@@ -909,6 +909,14 @@ function parseMemberUser(result) {
 //   lists/show.json?list_id=<reserved>                   -> answered locally
 const FORYOU_LIST_ID = "900000000000001";
 
+// For you is the same HomeTimeline query as the Home column. When the two requests
+// carry identical variables the deck keeps one response per URL shape, and one of
+// the two columns is left empty; a tag of its own splits them. X ignores a tag it
+// does not know and still answers with the full ranked page (checked: 200, 28
+// entries), so the sentinel changes the cache key and nothing else. A reserved list
+// id must not be used here: X answers that one with an empty page.
+const FORYOU_TAG = "otd-foryou";
+
 // The refresh button asks for one cursor-less page. The deck's poller would
 // otherwise send a since_id and only pull newer tweets onto the existing list.
 const algoForceTop = {};
@@ -1975,6 +1983,7 @@ const proxyRoutes = [
                         withCommunity: true,
                     };
                     if (feed.tag) variables.tag = feed.tag;
+                    else variables.tag = FORYOU_TAG;
                     // A refresh click must land on the top of the ranked feed, not
                     // wherever the previous page left off.
                     // Stays set until a request actually uses it: the deck does not
