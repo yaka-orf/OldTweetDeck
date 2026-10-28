@@ -3534,6 +3534,131 @@ const proxyRoutes = [
             return tweet;
         },
     },
+    // Replies: TweetDeck asks api.x.com for /2/timeline/conversation/<id>.json and X
+    // answers 403, so a tweet opens with no thread under it. Point the call at
+    // TweetDetail and rebuild the v1.1 conversation payload processTimeline reads.
+    {
+        path: /\/2\/timeline\/conversation\/(\d+)\.json/,
+        method: "GET",
+        beforeRequest: (xhr) => {
+            const originalUrl = new URL(xhr.originalUrl);
+            xhr.storage.tweet_id = originalUrl.pathname.match(
+                /\/2\/timeline\/conversation\/(\d+)\.json/
+            )[1];
+            xhr.modUrl = `https://${location.hostname}/i/api/graphql/KwGBbJZc6DBx8EKmyQSP7g/TweetDetail?variables=${encodeURIComponent(
+                JSON.stringify({
+                    focalTweetId: xhr.storage.tweet_id,
+                    with_rux_injections: false,
+                    includePromotedContent: false,
+                    withCommunity: true,
+                    withQuickPromoteEligibilityTweetFields: true,
+                    withBirdwatchNotes: true,
+                    withVoice: true,
+                    withV2Timeline: true,
+                })
+            )}&features=${encodeURIComponent(
+                JSON.stringify({
+                    rweb_lists_timeline_redesign_enabled: false,
+                    blue_business_profile_image_shape_enabled: true,
+                    responsive_web_graphql_exclude_directive_enabled: true,
+                    verified_phone_label_enabled: false,
+                    creator_subscriptions_tweet_preview_api_enabled: false,
+                    responsive_web_graphql_timeline_navigation_enabled: true,
+                    responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
+                    tweetypie_unmention_optimization_enabled: true,
+                    vibe_api_enabled: true,
+                    responsive_web_edit_tweet_api_enabled: true,
+                    graphql_is_translatable_rweb_tweet_is_translatable_enabled: true,
+                    view_counts_everywhere_api_enabled: true,
+                    longform_notetweets_consumption_enabled: true,
+                    tweet_awards_web_tipping_enabled: false,
+                    freedom_of_speech_not_reach_fetch_enabled: true,
+                    standardized_nudges_misinfo: true,
+                    tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: false,
+                    interactive_text_enabled: true,
+                    responsive_web_text_conversations_enabled: false,
+                    longform_notetweets_rich_text_read_enabled: true,
+                    longform_notetweets_inline_media_enabled: false,
+                    responsive_web_enhance_cards_enabled: false,
+                })
+            )}`;
+        },
+        beforeSendHeaders: (xhr) => {
+            xhr.modReqHeaders["Content-Type"] = "application/json";
+            xhr.modReqHeaders["X-Twitter-Active-User"] = "yes";
+            xhr.modReqHeaders["X-Twitter-Client-Language"] = "en";
+            xhr.modReqHeaders["Authorization"] = PUBLIC_TOKENS[0];
+            // GraphQL answers 403 unless the session auth type and csrf header are set.
+            xhr.modReqHeaders["X-Twitter-Auth-Type"] = "OAuth2Session";
+            const csrf = document.cookie.match(/(?:^|;\s*)ct0=([0-9a-f]+)\s*(?:;|$)/);
+            if (csrf) xhr.modReqHeaders["X-Csrf-Token"] = csrf[1];
+            delete xhr.modReqHeaders["X-Twitter-Client-Version"];
+        },
+        afterRequest: (xhr) => {
+            let data;
+            try {
+                data = JSON.parse(xhr.responseText);
+            } catch (e) {
+                console.error(e);
+                return {};
+            }
+            if (data.errors && data.errors[0]) {
+                return {};
+            }
+            const instructions =
+                (data.data &&
+                    data.data.threaded_conversation_with_injections_v2 &&
+                    data.data.threaded_conversation_with_injections_v2.instructions) ||
+                [];
+            const addEntries = instructions.find((i) => i.type === "TimelineAddEntries");
+            const source = (addEntries && addEntries.entries) || [];
+            const tweets = {};
+            const users = {};
+            const entries = [];
+            const remember = (result) => {
+                const tweet = parseTweet(result);
+                if (!tweet || !tweet.id_str) return null;
+                tweets[String(tweet.id_str)] = tweet;
+                if (tweet.user && tweet.user.id_str) users[String(tweet.user.id_str)] = tweet.user;
+                return tweet;
+            };
+            for (const entry of source) {
+                if (entry.entryId.startsWith("conversationthread-")) {
+                    const components = ((entry.content && entry.content.items) || [])
+                        .map((item) => remember(item.item && item.item.itemContent && item.item.itemContent.tweet_results && item.item.itemContent.tweet_results.result))
+                        .filter(Boolean)
+                        .map((tweet) => ({
+                            conversationTweetComponent: { tweet: { id: String(tweet.id_str) } },
+                        }));
+                    if (!components.length) continue;
+                    entries.push({
+                        entryId: "conversationThread-" + entry.entryId.split("-")[1],
+                        content: {
+                            item: {
+                                content: { conversationThread: { conversationComponents: components } },
+                            },
+                        },
+                    });
+                } else if (entry.entryId.startsWith("tweet-")) {
+                    const result =
+                        entry.content &&
+                        entry.content.itemContent &&
+                        entry.content.itemContent.tweet_results &&
+                        entry.content.itemContent.tweet_results.result;
+                    const tweet = remember(result);
+                    if (!tweet) continue;
+                    entries.push({
+                        entryId: entry.entryId,
+                        content: {
+                            item: { content: { tweet: { id: String(tweet.id_str), displayType: "Tweet" } } },
+                        },
+                    });
+                }
+            }
+            return { globalObjects: { tweets, users }, timeline: { instructions: [{ addEntries: { entries } }] } };
+        },
+    },
+
     // Tweet deletion
     {
         path: /\/1.1\/statuses\/destroy\/(\d+).json/,
